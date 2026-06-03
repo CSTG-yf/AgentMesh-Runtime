@@ -1,0 +1,1 @@
+Decompose AgentMesh Runtime into protocol, runtime, agents, state, memory, modes, sandbox, evaluation, storage, CLI, and documentation modules.

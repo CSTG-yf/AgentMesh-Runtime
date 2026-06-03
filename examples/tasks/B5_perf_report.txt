@@ -1,0 +1,1 @@
+Summarize performance metrics for structured collaboration, including token savings, latency reduction, state transfer counts, and memory hit rate.

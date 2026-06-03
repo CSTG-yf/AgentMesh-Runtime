@@ -1,0 +1,53 @@
+name: continuous_tasks
+repeat: 3
+tasks:
+  - id: A1
+    group: A
+    topic: contest requirement analysis
+    input_file: examples/tasks/A1_requirements.txt
+    tags: [requirements, multi-agent, protocol]
+  - id: A2
+    group: A
+    topic: runtime architecture design
+    input_file: examples/tasks/A2_architecture.txt
+    tags: [architecture, state-transfer, memory]
+  - id: A3
+    group: A
+    topic: module decomposition
+    input_file: examples/tasks/A3_modules.txt
+    tags: [modules, runtime]
+  - id: A4
+    group: A
+    topic: readme generation
+    input_file: examples/tasks/A4_readme.txt
+    tags: [readme, documentation]
+  - id: A5
+    group: A
+    topic: experiment report draft
+    input_file: examples/tasks/A5_report.txt
+    tags: [benchmark, report]
+  - id: B1
+    group: B
+    topic: python repository analysis
+    input_file: examples/tasks/B1_repo_analysis.txt
+    tags: [code, repo-analysis]
+  - id: B2
+    group: B
+    topic: unit test generation
+    input_file: examples/tasks/B2_tests.txt
+    tags: [test, code]
+  - id: B3
+    group: B
+    topic: bug fixing
+    input_file: examples/tasks/B3_bugfix.txt
+    tags: [bugfix, code]
+  - id: B4
+    group: B
+    topic: api documentation
+    input_file: examples/tasks/B4_api_docs.txt
+    tags: [api, documentation]
+  - id: B5
+    group: B
+    topic: performance report
+    input_file: examples/tasks/B5_perf_report.txt
+    tags: [performance, report]
