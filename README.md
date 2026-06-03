@@ -27,6 +27,7 @@ uv run agentmesh run --mode protocol --task examples/tasks/A1_requirements.txt
 uv run agentmesh run --mode text --task examples/tasks/A1_requirements.txt
 uv run agentmesh benchmark --suite examples/benchmarks/continuous_tasks.yaml
 uv run agentmesh report --run runs/latest
+uv run agentmesh chat --message "解释一下 AgentMesh Runtime 的 StateRef 机制"
 ```
 
 ## 常用命令
@@ -54,6 +55,12 @@ uv run agentmesh memory search --semantic "agent state passing"
 
 # 查看 trace
 uv run agentmesh trace show
+
+# 单轮真实模型交互，需先配置 .env
+uv run agentmesh chat --message "帮我分析这个项目当前还缺什么"
+
+# 多轮交互式会话，需先配置 .env
+uv run agentmesh chat
 ```
 
 ## 质量验证
@@ -87,6 +94,7 @@ AGENTMESH_LLM_BASE_URL=
 AGENTMESH_LLM_API_KEY=
 AGENTMESH_LLM_MODEL=
 AGENTMESH_LLM_TIMEOUT_SECONDS=30
+AGENTMESH_PROMPT_DIR=
 ```
 
 安全说明：
@@ -95,6 +103,34 @@ AGENTMESH_LLM_TIMEOUT_SECONDS=30
 - `.env.example` 会保留在仓库中，作为配置模板。
 - 代码中使用 `SecretStr` 保存 API Key，JSON 序列化时会脱敏。
 - 当前确定性 Agent 只读取配置状态，不会主动发起外部网络调用。
+- `agentmesh chat` 和已配置 LLM 的 Agent 处理链路会调用 `.env` 中的模型接口。
+
+## Prompt 模板配置
+
+初始提示词模板独立存储在 `prompts/` 目录：
+
+```text
+prompts/
+├── executor.md       # ExecutorAgent 初始提示词
+├── interactive.md    # agentmesh chat 交互式助手初始提示词
+├── planner.md        # PlannerAgent 初始提示词
+├── retriever.md      # RetrieverAgent 初始提示词
+└── summarizer.md     # SummarizerAgent 初始提示词
+```
+
+模板支持简单变量替换：
+
+- `planner.md` 可使用 `{task}`
+- `retriever.md` 可使用 `{query}`
+- `executor.md` 可使用 `{input}`
+- `summarizer.md` 可使用 `{input}`
+- `interactive.md` 可使用 `{user_input}`
+
+如需使用自定义模板目录，可以在 `.env` 中设置：
+
+```bash
+AGENTMESH_PROMPT_DIR=E:/system-compute/prompts
+```
 
 ## 运行产物
 
@@ -165,6 +201,13 @@ agentmesh-runtime/
 │       ├── B4_api_docs.txt                   # B 组任务 4：API 文档
 │       └── B5_perf_report.txt                # B 组任务 5：性能报告
 │
+├── prompts/
+│   ├── executor.md                           # ExecutorAgent 可配置初始提示词模板
+│   ├── interactive.md                        # 交互式 chat 可配置初始提示词模板
+│   ├── planner.md                            # PlannerAgent 可配置初始提示词模板
+│   ├── retriever.md                          # RetrieverAgent 可配置初始提示词模板
+│   └── summarizer.md                         # SummarizerAgent 可配置初始提示词模板
+│
 ├── scripts/
 │   ├── run_demo.sh                           # 一键运行 Protocol Mode demo
 │   ├── run_tests.sh                          # 一键运行 ruff、mypy、pytest
@@ -191,6 +234,14 @@ agentmesh-runtime/
 │       │   ├── quality.py                    # 确定性质量分估算
 │       │   └── report.py                     # experiment_report.md 自动生成
 │       │
+│       ├── chat/
+│       │   ├── __init__.py                   # Chat 子包初始化
+│       │   └── session.py                    # 交互式 chat turn、历史消息和 prompt 组装
+│       │
+│       ├── llm/
+│       │   ├── __init__.py                   # LLM 子包初始化
+│       │   └── client.py                     # OpenAI-compatible Chat Completions 客户端
+│       │
 │       ├── memory/
 │       │   ├── __init__.py                   # Memory 子包初始化
 │       │   ├── policy.py                     # MemoryWritePolicy：控制记忆是否写入
@@ -211,6 +262,10 @@ agentmesh-runtime/
 │       │   ├── enums.py                      # MsgType 枚举
 │       │   ├── router.py                     # ProtocolRouter：按 target_agent 路由消息
 │       │   └── schema.py                     # AMPMessage 数据结构和协议校验
+│       │
+│       ├── prompts/
+│       │   ├── __init__.py                   # Prompt 子包初始化
+│       │   └── store.py                      # PromptTemplateStore：按 Agent 加载和渲染提示词
 │       │
 │       ├── runtime/
 │       │   ├── __init__.py                   # Runtime 子包初始化
@@ -244,6 +299,8 @@ agentmesh-runtime/
     ├── test_embedding_ref.py                 # HashEmbedding 确定性、归一化和 StateStore 写入测试
     ├── test_memory_store.py                  # MemoryUnit 写入、关键词/标签/语义检索、评分策略测试
     ├── test_modes_and_benchmark.py           # Text/Protocol 双模式、Benchmark、Report 集成测试
+    ├── test_interactive_agent.py             # 交互式 Agent 使用可配置 prompt 和 LLM client 测试
+    ├── test_prompt_and_llm.py                # PromptTemplateStore 与 OpenAI-compatible client 测试
     ├── test_protocol_schema.py               # AMPMessage 字段校验和 codec roundtrip 测试
     ├── test_sandbox_runner.py                # SandboxRunner 成功执行和超时测试
     └── test_state_store.py                   # StateRef、StateStore、lineage、state_index 测试
@@ -313,6 +370,7 @@ bash scripts/setup_openeuler.sh
 ## 当前实现边界
 
 - 默认 Agent 是确定性规则实现，用于保证离线可复现 Benchmark。
-- `.env` 已支持大模型 endpoint/key/model 配置，但当前 MVP 不主动调用外部 LLM。
+- `.env` 已支持大模型 endpoint/key/model 配置；`agentmesh chat` 会真实调用模型接口。
+- Protocol Mode 中四个 Agent 在 LLM 配置可用时优先调用模型，调用失败会回退确定性逻辑。
 - `Blob` state 有 API 支持，默认 demo 主要展示 text、embedding、summary、evidence、code_result。
 - Dashboard/FastAPI 是第二阶段可选能力，当前未默认启用。

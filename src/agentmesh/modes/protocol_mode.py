@@ -2,7 +2,6 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from agentmesh.config import AgentMeshConfig
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
 from agentmesh.eval.quality import deterministic_quality_score
 from agentmesh.memory.policy import MemoryWritePolicy
@@ -29,8 +28,7 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
     state_store = StateStore(paths)
     memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
     registry = default_registry()
-    config = AgentMeshConfig.from_project_root(paths.root)
-    context = RuntimeContext(paths=paths, task_path=task_path, trace_id=trace_id, config=config)
+    context = RuntimeContext.from_paths(paths=paths, task_path=task_path, trace_id=trace_id)
     messages: list[AMPMessage] = []
 
     for agent in registry.all():
@@ -57,7 +55,7 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
                 "retriever": "memory.semantic_search",
                 "executor": "tool.run_python",
                 "summarizer": "summary.create",
-                "llm_configured": config.llm.configured,
+                "llm_configured": context.config.llm.configured,
             },
         )
     )

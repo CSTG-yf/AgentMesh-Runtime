@@ -23,6 +23,7 @@ class LLMConfig(BaseModel):
 
 class AgentMeshConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    prompt_dir: Path | None = None
 
     @classmethod
     def from_env_file(cls, path: Path) -> "AgentMeshConfig":
@@ -38,6 +39,7 @@ class AgentMeshConfig(BaseModel):
     def from_mapping(cls, values: dict[str, str]) -> "AgentMeshConfig":
         api_key = _first_present(values, "AGENTMESH_LLM_API_KEY", "OPENAI_API_KEY")
         timeout_raw = _first_present(values, "AGENTMESH_LLM_TIMEOUT_SECONDS")
+        prompt_dir_raw = _first_present(values, "AGENTMESH_PROMPT_DIR")
         timeout = 30.0
         if timeout_raw:
             timeout = float(timeout_raw)
@@ -47,7 +49,8 @@ class AgentMeshConfig(BaseModel):
                 api_key=SecretStr(api_key) if api_key else None,
                 model=_first_present(values, "AGENTMESH_LLM_MODEL", "OPENAI_MODEL"),
                 timeout_seconds=timeout,
-            )
+            ),
+            prompt_dir=Path(prompt_dir_raw) if prompt_dir_raw else None,
         )
 
 

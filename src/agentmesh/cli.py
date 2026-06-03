@@ -3,12 +3,15 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.prompt import Prompt
 
+from agentmesh.chat.session import ChatTurn, run_chat_turn
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.report import generate_report
 from agentmesh.memory.sqlite_store import SQLiteMemoryStore
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
+from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.state.embedding import HashEmbeddingEncoder
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import read_jsonl
@@ -61,6 +64,28 @@ def benchmark(
         console.print(f"[red]agentmesh benchmark failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     console.print(summary.model_dump())
+
+
+@app.command()
+def chat(
+    message: Annotated[str | None, typer.Option(help="Single-turn message.")] = None,
+    root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+) -> None:
+    paths = RuntimePaths(root=root)
+    context = RuntimeContext.from_paths(paths=paths, trace_id="trace-chat")
+    history: list[ChatTurn] = []
+    if message:
+        turn = run_chat_turn(message, context=context, history=history)
+        console.print(turn.assistant)
+        return
+    console.print("[bold]AgentMesh interactive chat[/bold] (type /exit to quit)")
+    while True:
+        user_input = Prompt.ask("you")
+        if user_input.strip() in {"/exit", "/quit"}:
+            return
+        turn = run_chat_turn(user_input, context=context, history=history)
+        history.append(turn)
+        console.print(f"[bold]agentmesh[/bold]: {turn.assistant}")
 
 
 @app.command()

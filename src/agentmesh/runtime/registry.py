@@ -1,9 +1,12 @@
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
 from agentmesh.config import AgentMeshConfig
 from agentmesh.errors import CapabilityNotFoundError
+from agentmesh.llm.client import LLMClient, create_llm_client
+from agentmesh.prompts.store import PromptTemplateStore
 from agentmesh.runtime.agent import BaseAgent
 from agentmesh.storage.paths import RuntimePaths
 
@@ -15,6 +18,28 @@ class RuntimeContext(BaseModel):
     task_path: Path | None = None
     trace_id: str
     config: AgentMeshConfig
+    prompts: PromptTemplateStore
+    llm_client: Any = None
+
+    @classmethod
+    def from_paths(
+        cls,
+        *,
+        paths: RuntimePaths,
+        trace_id: str,
+        task_path: Path | None = None,
+        llm_client: LLMClient | None = None,
+    ) -> "RuntimeContext":
+        config = AgentMeshConfig.from_project_root(paths.root)
+        prompts = PromptTemplateStore.from_project_root(paths.root, config.prompt_dir)
+        return cls(
+            paths=paths,
+            task_path=task_path,
+            trace_id=trace_id,
+            config=config,
+            prompts=prompts,
+            llm_client=llm_client if llm_client is not None else create_llm_client(config),
+        )
 
 
 class AgentRegistry:

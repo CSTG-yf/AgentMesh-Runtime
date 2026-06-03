@@ -1,3 +1,4 @@
+from agentmesh.llm.client import ChatMessage
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
 from agentmesh.runtime.agent import BaseAgent
@@ -10,6 +11,22 @@ class PlannerAgent(BaseAgent):
 
     def handle(self, message: AMPMessage, context: RuntimeContext) -> AMPMessage:
         task = str(message.params.get("task", ""))
+        llm_plan: str | None = None
+        if context.llm_client is not None:
+            try:
+                llm_plan = context.llm_client.complete(
+                    agent_name=self.name,
+                    messages=[
+                        ChatMessage(
+                            role="system",
+                            content=context.prompts.render(self.name, {"task": task}),
+                        ),
+                        ChatMessage(role="user", content=task),
+                    ],
+                    variables={"task": task},
+                )
+            except Exception:
+                llm_plan = None
         steps = [
             "identify task topic",
             "retrieve reusable memory",
@@ -26,6 +43,7 @@ class PlannerAgent(BaseAgent):
                 "plan": steps,
                 "topic": task[:80],
                 "llm_configured": context.config.llm.configured,
+                "llm_plan": llm_plan,
             },
             state_refs=message.state_refs,
         )
