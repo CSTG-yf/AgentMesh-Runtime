@@ -23,9 +23,16 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert protocol_result.mode == "protocol"
     assert protocol_result.metrics.communication_model == "structured_state_ref"
     assert protocol_result.metrics.wire_bytes > 0
-    assert protocol_result.metrics.wire_bytes == protocol_result.metrics.structured_handoff_bytes
+    assert protocol_result.metrics.session_dictionary_bytes > 0
+    assert protocol_result.metrics.typed_envelope_bytes > 0
+    assert protocol_result.metrics.typed_payload_bytes > 0
+    assert protocol_result.metrics.wire_bytes == protocol_result.metrics.typed_envelope_bytes
     assert protocol_result.metrics.structured_message_bytes > 0
     assert protocol_result.metrics.compact_structured_message_bytes > 0
+    assert (
+        protocol_result.metrics.wire_bytes
+        < protocol_result.metrics.compact_structured_message_bytes
+    )
     assert protocol_result.metrics.state_transfer_count >= 4
     assert set(protocol_result.metrics.stage_latency_ms) == {
         "setup",
@@ -79,6 +86,9 @@ tasks:
     assert summary.total_runs == 10
     assert summary.text_wire_bytes > 0
     assert summary.protocol_wire_bytes > 0
+    assert summary.protocol_session_dictionary_bytes > 0
+    assert summary.protocol_typed_envelope_bytes > 0
+    assert summary.protocol_typed_payload_bytes > 0
     assert summary.protocol_compact_message_bytes > 0
     assert summary.protocol_json_wire_bytes > 0
     assert summary.wire_bytes_reduction_rate != 0

@@ -20,6 +20,9 @@ class BenchmarkSummary(BaseModel):
     wire_bytes_reduction_rate: float
     text_wire_bytes: int
     protocol_wire_bytes: int
+    protocol_session_dictionary_bytes: int
+    protocol_typed_envelope_bytes: int
+    protocol_typed_payload_bytes: int
     protocol_compact_message_bytes: int
     protocol_json_wire_bytes: int
     protocol_state_payload_bytes: int
@@ -43,6 +46,9 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
     protocol_tokens = 0
     text_wire_bytes = 0
     protocol_wire_bytes = 0
+    protocol_session_dictionary_bytes = 0
+    protocol_typed_envelope_bytes = 0
+    protocol_typed_payload_bytes = 0
     protocol_compact_message_bytes = 0
     protocol_json_wire_bytes = 0
     protocol_state_payload_bytes = 0
@@ -70,6 +76,11 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
             protocol_tokens += protocol_result.metrics.estimated_tokens
             text_wire_bytes += text_result.metrics.wire_bytes
             protocol_wire_bytes += protocol_result.metrics.wire_bytes
+            protocol_session_dictionary_bytes += (
+                protocol_result.metrics.session_dictionary_bytes
+            )
+            protocol_typed_envelope_bytes += protocol_result.metrics.typed_envelope_bytes
+            protocol_typed_payload_bytes += protocol_result.metrics.typed_payload_bytes
             protocol_compact_message_bytes += (
                 protocol_result.metrics.compact_structured_message_bytes
             )
@@ -103,6 +114,9 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
         wire_bytes_reduction_rate=_rate(text_wire_bytes, protocol_wire_bytes),
         text_wire_bytes=text_wire_bytes,
         protocol_wire_bytes=protocol_wire_bytes,
+        protocol_session_dictionary_bytes=protocol_session_dictionary_bytes,
+        protocol_typed_envelope_bytes=protocol_typed_envelope_bytes,
+        protocol_typed_payload_bytes=protocol_typed_payload_bytes,
         protocol_compact_message_bytes=protocol_compact_message_bytes,
         protocol_json_wire_bytes=protocol_json_wire_bytes,
         protocol_state_payload_bytes=protocol_state_payload_bytes,

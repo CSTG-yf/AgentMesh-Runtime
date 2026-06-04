@@ -9,6 +9,9 @@ class RunMetrics(BaseModel):
     wire_bytes: int = 0
     text_wire_bytes: int = 0
     structured_handoff_bytes: int = 0
+    session_dictionary_bytes: int = 0
+    typed_envelope_bytes: int = 0
+    typed_payload_bytes: int = 0
     structured_message_bytes: int = 0
     compact_structured_message_bytes: int = 0
     protocol_bytes: int = 0

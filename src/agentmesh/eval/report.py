@@ -21,6 +21,10 @@ def generate_report(paths: RuntimePaths) -> Path:
         f"- WireBytesReductionRate: {summary.get('wire_bytes_reduction_rate', '0')}",
         f"- TextWireBytes: {summary.get('text_wire_bytes', '0')}",
         f"- ProtocolWireBytes: {summary.get('protocol_wire_bytes', '0')}",
+        "- ProtocolSessionDictionaryBytes: "
+        f"{summary.get('protocol_session_dictionary_bytes', '0')}",
+        f"- ProtocolTypedEnvelopeBytes: {summary.get('protocol_typed_envelope_bytes', '0')}",
+        f"- ProtocolTypedPayloadBytes: {summary.get('protocol_typed_payload_bytes', '0')}",
         f"- ProtocolCompactMessageBytes: {summary.get('protocol_compact_message_bytes', '0')}",
         f"- ProtocolJsonWireBytes: {summary.get('protocol_json_wire_bytes', '0')}",
         f"- ProtocolStatePayloadBytes: {summary.get('protocol_state_payload_bytes', '0')}",

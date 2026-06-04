@@ -9,8 +9,13 @@ from agentmesh.llm.client import LLMClient
 from agentmesh.memory.policy import MemoryWritePolicy
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.sqlite_store import SQLiteMemoryStore
-from agentmesh.protocol.codec import encode_message, encode_message_compact, encode_payload_compact
+from agentmesh.protocol.codec import (
+    encode_message,
+    encode_message_compact,
+    encode_payload_compact,
+)
 from agentmesh.protocol.enums import MsgType
+from agentmesh.protocol.envelope import measure_typed_envelopes
 from agentmesh.protocol.schema import AMPMessage
 from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
@@ -292,6 +297,7 @@ def run_protocol_mode(
         append_jsonl(paths.protocol_messages, message.model_dump(mode="json"))
     protocol_bytes = sum(len(encode_message(message)) for message in messages)
     compact_protocol_bytes = sum(len(encode_message_compact(message)) for message in messages)
+    typed_envelope_stats = measure_typed_envelopes(messages)
     handoff_bytes = _handoff_wire_bytes(messages)
     state_records = state_store.list_by_trace(trace_id)
     state_transfer_bytes = sum(record.size_bytes for record in state_records)
@@ -302,8 +308,11 @@ def run_protocol_mode(
         text_chars=len(task),
         estimated_tokens=estimate_tokens(task),
         communication_model="structured_state_ref",
-        wire_bytes=handoff_bytes,
+        wire_bytes=typed_envelope_stats.wire_bytes,
         structured_handoff_bytes=handoff_bytes,
+        session_dictionary_bytes=typed_envelope_stats.session_dictionary_bytes,
+        typed_envelope_bytes=typed_envelope_stats.typed_envelope_bytes,
+        typed_payload_bytes=typed_envelope_stats.typed_payload_bytes,
         structured_message_bytes=protocol_bytes,
         compact_structured_message_bytes=compact_protocol_bytes,
         protocol_bytes=protocol_bytes,

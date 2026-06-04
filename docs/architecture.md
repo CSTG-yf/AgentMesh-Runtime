@@ -20,7 +20,19 @@ The evaluation compares two communication models on the same task suite:
 - Text Mode baseline: agents pass the full accumulated natural-language context to the next agent. Metrics record this as `communication_model="plain_text"` and count `wire_bytes` from full text payloads.
 - Protocol Mode candidate: agents exchange AMP structured messages containing compact `state://...` references. Actual payloads are stored in `StateStore`, and hot-path codec, StateRef parsing, embedding, vector top-k, and sandbox subprocess primitives can use Rust Core when installed.
 
-The benchmark summary reports both token savings and wire-byte savings. `ProtocolWireBytes` is the compact `STATE_REF` handoff payload sent between agents. `ProtocolCompactMessageBytes` is the full compact AMP message size, backed by Rust/msgpack helpers when Rust Core is installed. `ProtocolJsonWireBytes` is reported separately for readable JSON logs. `protocol_state_payload_bytes` is also separate because State payloads are persisted shared state, not repeatedly transmitted through the agent bus.
+The benchmark summary reports both token savings and wire-byte savings. `ProtocolWireBytes` is the typed envelope wire size: one session dictionary plus compact per-message envelopes. The envelope stores short IDs for trace, source, target, message type, action, capabilities, StateRefs, and payload references. `ProtocolTypedPayloadBytes` is reported separately because large params/results are modeled as payload-store entries instead of repeated bus payload. `ProtocolCompactMessageBytes` is the full compact AMP message size, backed by Rust/msgpack helpers when Rust Core is installed. `ProtocolJsonWireBytes` is reported separately for readable JSON logs. `protocol_state_payload_bytes` is also separate because State payloads are persisted shared state, not repeatedly transmitted through the agent bus.
+
+## Typed Envelope Communication
+
+Protocol Mode keeps readable AMP records for auditing, but its low-overhead communication model is a compact envelope:
+
+```text
+session dictionary: agent/action/capability/msg_type/state_ref -> integer id
+message envelope: {i, q, s, t, m, a?, c?, r?, p?}
+payload store: params/result payloads addressed by p ids
+```
+
+This avoids retransmitting agent names, action strings, capability lists, full `state://...` refs, and large task/result payloads on every Agent handoff.
 
 ## Rust Core Optimization
 

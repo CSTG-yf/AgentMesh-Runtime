@@ -9,6 +9,7 @@ AgentMesh-Runtime 是一个面向多 Agent 协作的轻量级运行时原型。�
 - Agent Message Protocol：支持 `HELLO`、`CAPABILITY_ADVERTISE`、`CAPABILITY_QUERY`、`PROTOCOL_MAP`、`INVOKE`、`RESULT`、`ERROR`、`STATE_REF`、`MEMORY_PUT` 等消息。
 - 四个内置 Agent：`PlannerAgent`、`RetrieverAgent`、`ExecutorAgent`、`SummarizerAgent`。
 - 双模式协作：`Text Mode` 作为长文本 baseline，`Protocol Mode` 使用结构化消息和 `state://...` 引用。
+- Typed Envelope 通信：Protocol Mode 在可读 AMP 日志之外统计字典化 typed envelope，Agent 间消息只传短 ID、StateRef ID 和 payload ID。
 - StateStore：支持 text、embedding、summary、evidence、code_result、blob 等状态类型，并记录 lineage。
 - HashEmbedding：不依赖外部模型，使用本地 hash trick 生成确定性向量。
 - Shared Memory Store：基于 SQLite + FTS5，支持关键词检索、标签检索和语义检索。
@@ -102,7 +103,7 @@ make all
 第一版 MVP 默认不依赖外部大模型，Benchmark 也不需要网络或 API Key。若后续 Agent 策略需要调用模型，请复制示例文件：
 
 ```bash
-cp .env.example .env
+cp .env .env
 ```
 
 在 `.env` 中填写：
