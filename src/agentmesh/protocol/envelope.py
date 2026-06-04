@@ -5,6 +5,7 @@ from typing import Any
 
 import orjson
 
+from agentmesh.core import rust_available, rust_core
 from agentmesh.protocol.codec import encode_payload_compact
 from agentmesh.protocol.schema import AMPMessage
 
@@ -27,7 +28,7 @@ def measure_typed_envelopes(messages: list[AMPMessage]) -> TypedEnvelopeStats:
     payload_bytes = 0
     for index, message in enumerate(messages, start=1):
         envelope, payload = build_typed_envelope(message, dictionary, payload_index=index)
-        envelope_bytes += len(encode_payload_compact(envelope))
+        envelope_bytes += len(encode_typed_envelope(envelope))
         if payload is not None:
             payload_bytes += len(encode_payload_compact(payload))
     return TypedEnvelopeStats(
@@ -35,6 +36,23 @@ def measure_typed_envelopes(messages: list[AMPMessage]) -> TypedEnvelopeStats:
         typed_envelope_bytes=envelope_bytes,
         typed_payload_bytes=payload_bytes,
     )
+
+
+def encode_typed_envelope(envelope: dict[str, Any]) -> bytes:
+    if rust_available() and hasattr(rust_core(), "encode_typed_envelope_bytes"):
+        return bytes(rust_core().encode_typed_envelope_bytes(orjson.dumps(envelope).decode()))
+    return encode_payload_compact(envelope)
+
+
+def decode_typed_envelope(data: bytes) -> dict[str, Any]:
+    if rust_available() and hasattr(rust_core(), "decode_typed_envelope_json_text"):
+        decoded = rust_core().decode_typed_envelope_json_text(data)
+    else:
+        decoded = rust_core().decode_msgpack_json_text(data) if rust_available() else data
+    loaded = orjson.loads(decoded)
+    if not isinstance(loaded, dict):
+        raise ValueError("typed envelope must decode to an object")
+    return loaded
 
 
 def build_session_dictionary(messages: list[AMPMessage]) -> dict[str, dict[str, int]]:

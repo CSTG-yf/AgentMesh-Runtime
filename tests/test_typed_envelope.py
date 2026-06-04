@@ -2,6 +2,8 @@ from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.envelope import (
     build_session_dictionary,
     build_typed_envelope,
+    decode_typed_envelope,
+    encode_typed_envelope,
     measure_typed_envelopes,
 )
 from agentmesh.protocol.schema import AMPMessage
@@ -50,3 +52,12 @@ def test_typed_envelope_wire_is_smaller_than_payload_bytes() -> None:
     assert stats.session_dictionary_bytes > 0
     assert stats.typed_envelope_bytes > 0
     assert stats.typed_payload_bytes > stats.typed_envelope_bytes
+
+
+def test_typed_envelope_encode_decode_roundtrip() -> None:
+    envelope = {"i": 1, "q": 1, "s": 2, "t": 3, "m": 4, "a": 5, "r": [6, 7]}
+
+    encoded = encode_typed_envelope(envelope)
+    decoded = decode_typed_envelope(encoded)
+
+    assert decoded == envelope

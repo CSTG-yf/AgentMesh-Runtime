@@ -11,7 +11,14 @@ class SummarizerAgent(BaseAgent):
 
     def handle(self, message: AMPMessage, context: RuntimeContext) -> AMPMessage:
         llm_summary: str | None = None
-        summary = "AgentMesh Runtime completed a deterministic collaboration step."
+        code_result = str(message.params.get("code_result", ""))
+        input_text = ", ".join(message.state_refs)
+        if code_result:
+            input_text = f"{input_text}\n\nCodeAct result:\n{code_result}"
+        summary = (
+            "AgentMesh Runtime completed a deterministic collaboration step. "
+            f"{code_result}".strip()
+        )
         if context.llm_client is not None:
             try:
                 llm_summary = context.llm_client.complete(
@@ -21,12 +28,12 @@ class SummarizerAgent(BaseAgent):
                             role="system",
                             content=context.prompts.render(
                                 self.name,
-                                {"input": ", ".join(message.state_refs)},
+                                {"input": input_text},
                             ),
                         ),
-                        ChatMessage(role="user", content=", ".join(message.state_refs)),
+                        ChatMessage(role="user", content=input_text),
                     ],
-                    variables={"input": ", ".join(message.state_refs)},
+                    variables={"input": input_text},
                 )
                 summary = llm_summary
             except Exception:

@@ -1,6 +1,15 @@
 from pathlib import Path
+from typing import Any
 
-from agentmesh.state.embedding import HashEmbeddingEncoder, cosine_similarity
+import orjson
+
+from agentmesh.config import EmbeddingConfig
+from agentmesh.state.embedding import (
+    HashEmbeddingEncoder,
+    TEIEmbeddingEncoder,
+    cosine_similarity,
+    create_embedding_encoder,
+)
 from agentmesh.state.schema import StateType
 from agentmesh.state.store import StateStore
 from agentmesh.storage.paths import RuntimePaths
@@ -29,3 +38,49 @@ def test_embedding_can_be_written_to_state_store(tmp_path: Path) -> None:
 
     assert record.state_type == StateType.EMBEDDING
     assert payload == embedding
+
+
+def test_tei_embedding_encoder_calls_embed_endpoint(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+
+    class Response:
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return orjson.dumps([[0.1, 0.2, 0.3]])
+
+    def fake_urlopen(request: Any, timeout: float) -> Response:
+        captured["url"] = request.full_url
+        captured["body"] = orjson.loads(request.data)
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    encoder = TEIEmbeddingEncoder(
+        base_url="http://127.0.0.1:8080",
+        timeout_seconds=7,
+    )
+
+    assert encoder.encode("中文语义检索") == [0.1, 0.2, 0.3]
+    assert captured == {
+        "url": "http://127.0.0.1:8080/embed",
+        "body": {"inputs": "中文语义检索"},
+        "timeout": 7,
+    }
+
+
+def test_create_embedding_encoder_uses_tei_when_configured() -> None:
+    encoder = create_embedding_encoder(
+        EmbeddingConfig(
+            provider="tei",
+            base_url="http://127.0.0.1:8080",
+            dimensions=512,
+        )
+    )
+
+    assert isinstance(encoder, TEIEmbeddingEncoder)

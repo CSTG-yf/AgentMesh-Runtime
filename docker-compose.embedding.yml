@@ -1,0 +1,13 @@
+services:
+  tei-embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    ports:
+      - "8080:80"
+    volumes:
+      - hf-cache:/data
+    command:
+      - --model-id
+      - BAAI/bge-small-zh-v1.5
+
+volumes:
+  hf-cache:

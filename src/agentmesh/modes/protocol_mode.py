@@ -1,5 +1,6 @@
 import time
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from agentmesh.core import rust_available
@@ -20,7 +21,7 @@ from agentmesh.protocol.schema import AMPMessage
 from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.sandbox.runner import SandboxRunner
-from agentmesh.state.embedding import HashEmbeddingEncoder
+from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import append_jsonl
 from agentmesh.storage.paths import RuntimePaths
@@ -42,10 +43,7 @@ def run_protocol_mode(
         stage_latency_ms[name] = int((time.perf_counter() - stage_start) * 1000)
 
     stage_start = time.perf_counter()
-    encoder = HashEmbeddingEncoder()
     state_store = StateStore(paths)
-    memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
-    registry = default_registry()
     context = RuntimeContext.from_paths(
         paths=paths,
         task_path=task_path,
@@ -53,6 +51,9 @@ def run_protocol_mode(
         llm_client=llm_client,
         load_configured_llm=load_configured_llm,
     )
+    encoder = create_embedding_encoder(context.config.embedding)
+    memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
+    registry = default_registry()
     messages: list[AMPMessage] = []
     mark_stage("setup", stage_start)
 
@@ -193,30 +194,44 @@ def run_protocol_mode(
     mark_stage("retriever", stage_start)
 
     stage_start = time.perf_counter()
-    sandbox_result = SandboxRunner(paths.sandbox_dir).run_python("print('agentmesh validation ok')")
-    mark_stage("sandbox", stage_start)
-
-    stage_start = time.perf_counter()
+    evidence_digest = _evidence_digest(evidence)
     executor_invoke = AMPMessage(
         trace_id=trace_id,
         source_agent="retriever",
         target_agent="executor",
         msg_type=MsgType.INVOKE,
         action="tool.run_python",
+        params={"task": task, "evidence": evidence_digest},
         state_refs=[evidence_ref],
     )
     messages.append(executor_invoke)
     executor_result = registry.get("executor").handle(executor_invoke, context)
     messages.append(executor_result)
+    mark_stage("executor", stage_start)
+
+    stage_start = time.perf_counter()
+    codeact_code = str(executor_result.result.get("codeact_code") or "")
+    sandbox_result = SandboxRunner(paths.sandbox_dir).run_python(codeact_code)
+    mark_stage("sandbox", stage_start)
+
+    stage_start = time.perf_counter()
     code_result_payload = sandbox_result.model_dump()
     code_result_payload["executor_result"] = executor_result.result
+    code_result_payload["codeact"] = {
+        "code": codeact_code,
+        "generated_by_llm": bool(executor_result.result.get("llm_generated_code")),
+        "stdout": sandbox_result.stdout,
+        "stderr": sandbox_result.stderr,
+        "exit_code": sandbox_result.exit_code,
+    }
     code_result_ref = state_store.put_code_result(
         trace_id=trace_id,
         producer="executor",
         result=code_result_payload,
         parent_state_refs=[evidence_ref],
         metadata={
-            "llm_used": _non_empty_text(executor_result.result.get("llm_validation")) is not None
+            "llm_used": bool(executor_result.result.get("llm_generated_code")),
+            "codeact": True,
         },
     )
     messages.append(
@@ -230,15 +245,17 @@ def run_protocol_mode(
             result={"state_count": 1},
         )
     )
-    mark_stage("executor", stage_start)
+    mark_stage("code_result_state", stage_start)
 
     stage_start = time.perf_counter()
+    code_result_summary = _code_result_summary(code_result_payload)
     summarizer_invoke = AMPMessage(
         trace_id=trace_id,
         source_agent="executor",
         target_agent="summarizer",
         msg_type=MsgType.INVOKE,
         action="summary.create",
+        params={"code_result": code_result_summary},
         state_refs=[task_ref, plan_ref, evidence_ref, code_result_ref],
     )
     messages.append(summarizer_invoke)
@@ -376,3 +393,26 @@ def _handoff_wire_bytes(messages: list[AMPMessage]) -> int:
             )
         )
     return total
+
+
+def _evidence_digest(evidence: list[dict[str, Any]]) -> str:
+    snippets: list[str] = []
+    for item in evidence[:5]:
+        title = str(item.get("title", "evidence"))
+        snippet = str(item.get("snippet", ""))[:240]
+        snippets.append(f"{title}: {snippet}")
+    return "\n".join(snippets)
+
+
+def _code_result_summary(payload: dict[str, Any]) -> str:
+    codeact = payload.get("codeact")
+    if not isinstance(codeact, dict):
+        return "CodeAct execution result unavailable."
+    stdout = str(codeact.get("stdout", "")).strip()
+    stderr = str(codeact.get("stderr", "")).strip()
+    exit_code = codeact.get("exit_code")
+    return (
+        f"CodeAct exit_code={exit_code}; "
+        f"stdout={stdout[:500] or '<empty>'}; "
+        f"stderr={stderr[:300] or '<empty>'}"
+    )

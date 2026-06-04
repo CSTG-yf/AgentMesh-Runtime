@@ -21,10 +21,11 @@ Generated artifacts:
 
 ## Fairness Rules
 
-Text Mode and Protocol Mode must run the same task suite, repeat count, deterministic agents,
-and sandbox behavior. Rust optimizations may reduce serialization, indexing, state-transfer,
-and retrieval overhead, but must not change the task content, memory write policy, or quality
-scoring function.
+Text Mode and Protocol Mode must run the same task suite, repeat count, and quality scoring
+function. Text Mode is deliberately unoptimized: it passes the complete text context from one
+agent to the next and must not use Rust Core, typed envelopes, StateRefs, embeddings, shared
+memory, sandbox execution, or hidden state processing. Rust optimizations may reduce
+serialization, indexing, state-transfer, and retrieval overhead only in Protocol Mode.
 
 For reproducible contest evaluation, benchmark runs should avoid project-local `.env` LLM
 settings unless explicitly evaluating the optional LLM-backed mode.

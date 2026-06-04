@@ -28,6 +28,31 @@ def test_config_loads_llm_settings_from_dotenv_without_exporting_secret(tmp_path
     assert config.model_dump(mode="json")["llm"]["api_key"] == "**********"
 
 
+def test_config_loads_tei_embedding_settings(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "AGENTMESH_EMBEDDING_PROVIDER=tei",
+                "AGENTMESH_EMBEDDING_BASE_URL=http://127.0.0.1:8080",
+                "AGENTMESH_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5",
+                "AGENTMESH_EMBEDDING_DIMENSIONS=512",
+                "AGENTMESH_EMBEDDING_TIMEOUT_SECONDS=9",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = AgentMeshConfig.from_env_file(env_file)
+
+    assert config.embedding.provider == "tei"
+    assert config.embedding.base_url == "http://127.0.0.1:8080"
+    assert config.embedding.model == "BAAI/bge-small-zh-v1.5"
+    assert config.embedding.dimensions == 512
+    assert config.embedding.timeout_seconds == 9.0
+    assert config.embedding.tei_configured
+
+
 def test_protocol_mode_receives_optional_llm_config_from_env(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         "\n".join(

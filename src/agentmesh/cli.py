@@ -7,6 +7,7 @@ from rich.prompt import Prompt
 
 from agentmesh.chat.session import ChatTurn, run_chat_turn
 from agentmesh.eval.benchmark import run_benchmark
+from agentmesh.eval.compare import run_prompt_compare
 from agentmesh.eval.report import generate_report
 from agentmesh.memory.sqlite_store import SQLiteMemoryStore
 from agentmesh.modes.protocol_mode import run_protocol_mode
@@ -62,6 +63,27 @@ def benchmark(
         summary = run_benchmark(suite, paths)
     except Exception as exc:
         console.print(f"[red]agentmesh benchmark failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(summary.model_dump())
+
+
+@app.command()
+def compare(
+    prompt: Annotated[str, typer.Argument(help="User task prompt to run in both modes.")],
+    root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+    llm: Annotated[
+        bool,
+        typer.Option(
+            "--llm/--no-llm",
+            help="Allow Protocol Mode agents to call the configured LLM.",
+        ),
+    ] = False,
+) -> None:
+    paths = RuntimePaths(root=root)
+    try:
+        summary = run_prompt_compare(prompt, paths=paths, use_llm=llm)
+    except Exception as exc:
+        console.print(f"[red]agentmesh compare failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     console.print(summary.model_dump())
 

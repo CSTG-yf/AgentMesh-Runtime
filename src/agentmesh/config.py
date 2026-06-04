@@ -21,8 +21,21 @@ class LLMConfig(BaseModel):
         return bool(self.base_url and self.api_key and self.model)
 
 
+class EmbeddingConfig(BaseModel):
+    provider: str = "hash"
+    base_url: str | None = None
+    model: str = "BAAI/bge-small-zh-v1.5"
+    dimensions: int = 512
+    timeout_seconds: float = 15.0
+
+    @property
+    def tei_configured(self) -> bool:
+        return self.provider == "tei" and bool(self.base_url)
+
+
 class AgentMeshConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     prompt_dir: Path | None = None
 
     @classmethod
@@ -39,16 +52,33 @@ class AgentMeshConfig(BaseModel):
     def from_mapping(cls, values: dict[str, str]) -> "AgentMeshConfig":
         api_key = _first_present(values, "AGENTMESH_LLM_API_KEY", "OPENAI_API_KEY")
         timeout_raw = _first_present(values, "AGENTMESH_LLM_TIMEOUT_SECONDS")
+        embedding_provider = _first_present(values, "AGENTMESH_EMBEDDING_PROVIDER") or "hash"
+        embedding_dimensions_raw = _first_present(values, "AGENTMESH_EMBEDDING_DIMENSIONS")
+        embedding_timeout_raw = _first_present(values, "AGENTMESH_EMBEDDING_TIMEOUT_SECONDS")
         prompt_dir_raw = _first_present(values, "AGENTMESH_PROMPT_DIR")
         timeout = 30.0
         if timeout_raw:
             timeout = float(timeout_raw)
+        embedding_dimensions = 512
+        if embedding_dimensions_raw:
+            embedding_dimensions = int(embedding_dimensions_raw)
+        embedding_timeout = 15.0
+        if embedding_timeout_raw:
+            embedding_timeout = float(embedding_timeout_raw)
         return cls(
             llm=LLMConfig(
                 base_url=_first_present(values, "AGENTMESH_LLM_BASE_URL", "OPENAI_BASE_URL"),
                 api_key=SecretStr(api_key) if api_key else None,
                 model=_first_present(values, "AGENTMESH_LLM_MODEL", "OPENAI_MODEL"),
                 timeout_seconds=timeout,
+            ),
+            embedding=EmbeddingConfig(
+                provider=embedding_provider,
+                base_url=_first_present(values, "AGENTMESH_EMBEDDING_BASE_URL"),
+                model=_first_present(values, "AGENTMESH_EMBEDDING_MODEL")
+                or "BAAI/bge-small-zh-v1.5",
+                dimensions=embedding_dimensions,
+                timeout_seconds=embedding_timeout,
             ),
             prompt_dir=Path(prompt_dir_raw) if prompt_dir_raw else None,
         )

@@ -1,0 +1,9 @@
+Task LC-B5: Analyze performance results for the long-context benchmark.
+
+Context block: The analysis should compare TextWireBytes, ProtocolWireBytes, ProtocolTypedEnvelopeBytes, ProtocolTypedPayloadBytes, ProtocolStatePayloadBytes, TokenSavingRate, WireBytesReductionRate, LatencyReductionRate, MemoryHitRate, RustCoreEnabledRuns, and RustSandboxBackendRuns. Explain why StateRef and typed envelope help communication cost, and why latency can still depend on sandbox and memory operations.
+
+Repeated evidence: Long-context workloads make repeated natural language handoff expensive. The structured protocol stores payloads once, passes compact references, reuses memory across related tasks, and can rely on Rust for encoding and vector operations. The report should avoid overclaiming and should distinguish bus payload bytes from payload-store bytes. This paragraph is repeated to make the performance comparison meaningful.
+
+Repeated evidence: Long-context workloads make repeated natural language handoff expensive. The structured protocol stores payloads once, passes compact references, reuses memory across related tasks, and can rely on Rust for encoding and vector operations. The report should avoid overclaiming and should distinguish bus payload bytes from payload-store bytes. This paragraph is repeated to make the performance comparison meaningful.
+
+Deliverable: produce performance conclusions and next optimization steps.

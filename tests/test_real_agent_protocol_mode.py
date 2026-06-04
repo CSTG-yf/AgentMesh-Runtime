@@ -22,6 +22,8 @@ class AgentEchoLLMClient(LLMClient):
         self.calls.append(
             {"agent_name": agent_name, "messages": messages, "variables": variables or {}}
         )
+        if agent_name == "executor":
+            return "print('executor model response')"
         return f"{agent_name} model response"
 
 
@@ -61,4 +63,6 @@ def test_protocol_mode_uses_llm_outputs_as_agent_state(tmp_path: Path) -> None:
 
     assert any("planner model response" in summary for summary in planner_summaries)
     assert summarizer_summaries == ["summarizer model response"]
-    assert executor_results[0]["executor_result"]["llm_validation"] == "executor model response"
+    assert executor_results[0]["executor_result"]["llm_generated_code"] is True
+    assert executor_results[0]["codeact"]["stdout"].strip() == "executor model response"
+    assert executor_results[0]["codeact"]["exit_code"] == 0

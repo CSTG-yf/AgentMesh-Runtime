@@ -14,6 +14,7 @@
 | 9 | Optional Rust Core acceleration, msgpack helpers, sandbox subprocess backend, warm worker reuse | Completed | `tests/test_rust_*`, `tests/test_sandbox_runner.py` |
 | 10 | LLM-backed real-agent state handoff in Protocol Mode | Completed | `tests/test_real_agent_protocol_mode.py` |
 | 11 | Explicit plain-text vs structured AMP/Rust communication comparison metrics | Completed | `tests/test_modes_and_benchmark.py` |
+| 12 | CodeAct execution, Rust typed envelope codec, prompt compare CLI, long-context benchmark, readable Chinese README | Completed | `tests/test_compare_prompt.py`, `tests/test_typed_envelope.py`, `tests/test_real_agent_protocol_mode.py` |
 
 Latest verified command:
 
@@ -37,12 +38,15 @@ uv run agentmesh trace show
 Results:
 
 - `ruff`: all checks passed.
-- `mypy`: no issues in 55 source files.
-- `pytest`: 41 tests passed with Rust Core installed; Rust-only tests are skipped when `agentmesh_core` is not installed.
+- `mypy`: no issues in 57 source files.
+- `pytest`: 45 tests passed with Rust Core installed; Rust-only tests are skipped when `agentmesh_core` is not installed.
 - Protocol demo: produced `sandbox exit 0`.
 - Real LLM Protocol demo: `trace-dcefca7cdce7`, final answer came from `SummarizerAgent` model output; LLM stages dominated latency (`planner` about `19.7s`, `retriever` about `30.2s`, `executor` about `22.1s`, `summarizer` about `23.6s`).
 - Benchmark: 30 logical runs, `TokenSavingRate` about `0.7055`, `WireBytesReductionRate` about `0.3300`, `TextWireBytes` `26418`, `ProtocolWireBytes` `17700`, `MemoryHitRate` about `0.9667`, `LatencyReductionRate` about `-524.29`.
 - Rust Core: StateRef parsing, JSON/msgpack codec helpers, HashEmbedding, semantic top-k, Rust sandbox backend, and warm worker reuse are implemented behind Python fallback boundaries.
 - Rust communication benchmark: Rust Core was available in all 30 protocol runs; `ProtocolCompactMessageBytes` was `242274` and readable `ProtocolJsonWireBytes` was `280404`. `RustSandboxBackendRuns` was `0` because `SandboxRunner` currently prefers the warm Python worker before falling back to Rust subprocess.
+- Prompt compare CLI: `uv run agentmesh compare "..."` ran both modes from user input and reported token, latency, wire-byte, and memory-hit metrics.
+- Long-context benchmark: 20 logical runs, `TokenSavingRate` about `0.5310`, `WireBytesReductionRate` about `0.8861`, `TextWireBytes` `128524`, `ProtocolWireBytes` `14640`, `MemoryHitRate` about `0.95`.
+- Rust typed envelope codec: `uv run maturin develop --manifest-path crates/agentmesh-core/Cargo.toml` succeeded; Python confirmed `encode_typed_envelope_bytes` and `decode_typed_envelope_json_text` are exported.
 - Warm worker profile: repeated Protocol Mode on the same run root reduced sandbox stage from about `69ms` to about `1ms`.
 - `make all`: not run in this Windows shell because `make` is not installed.

@@ -1,0 +1,9 @@
+Task LC-A3: Explain the StateRef lifecycle and non-text state transfer.
+
+Context block: A task begins as TextState, then HashEmbeddingEncoder generates an EmbeddingState. PlannerAgent produces a SummaryState, RetrieverAgent writes EvidenceState, ExecutorAgent writes CodeResultState, and SummarizerAgent writes a final SummaryState and MemoryUnit. Each state record has lineage, payload bytes, producer, parent references, and persisted payload location.
+
+Repeated evidence: Non-text state transfer is important because embeddings and semantic vectors can be exchanged without rewriting the original long prompt. The receiving agent does not need all natural language content on the bus; it can receive a compact state URI and fetch only the required payload. Later tasks can reuse memory embeddings for semantic search. This paragraph intentionally repeats the same lifecycle to make full-text retransmission expensive and StateRef handoff compact.
+
+Repeated evidence: Non-text state transfer is important because embeddings and semantic vectors can be exchanged without rewriting the original long prompt. The receiving agent does not need all natural language content on the bus; it can receive a compact state URI and fetch only the required payload. Later tasks can reuse memory embeddings for semantic search. This paragraph intentionally repeats the same lifecycle to make full-text retransmission expensive and StateRef handoff compact.
+
+Deliverable: describe generation, transfer, reception, and use of embedding states.

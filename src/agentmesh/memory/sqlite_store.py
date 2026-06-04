@@ -5,7 +5,7 @@ import orjson
 
 from agentmesh.core import rust_available, rust_core
 from agentmesh.memory.schema import MemoryUnit
-from agentmesh.state.embedding import HashEmbeddingEncoder, cosine_similarity
+from agentmesh.state.embedding import EmbeddingEncoder, HashEmbeddingEncoder, cosine_similarity
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import append_jsonl
 from agentmesh.storage.paths import RuntimePaths
@@ -16,7 +16,7 @@ class SQLiteMemoryStore:
         self,
         paths: RuntimePaths,
         state_store: StateStore,
-        encoder: HashEmbeddingEncoder | None = None,
+        encoder: EmbeddingEncoder | None = None,
     ) -> None:
         self.paths = paths
         self.state_store = state_store

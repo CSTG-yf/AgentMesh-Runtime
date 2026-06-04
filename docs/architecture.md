@@ -20,6 +20,8 @@ The evaluation compares two communication models on the same task suite:
 - Text Mode baseline: agents pass the full accumulated natural-language context to the next agent. Metrics record this as `communication_model="plain_text"` and count `wire_bytes` from full text payloads.
 - Protocol Mode candidate: agents exchange AMP structured messages containing compact `state://...` references. Actual payloads are stored in `StateStore`, and hot-path codec, StateRef parsing, embedding, vector top-k, and sandbox subprocess primitives can use Rust Core when installed.
 
+Fairness rule: Text Mode must never use Rust Core, typed envelopes, StateRefs, embeddings, shared memory, sandbox execution, or hidden state processing. It is intentionally a plain text handoff chain where each agent forwards its complete text context to the next agent. Rust and structured-state optimizations are only part of Protocol Mode.
+
 The benchmark summary reports both token savings and wire-byte savings. `ProtocolWireBytes` is the typed envelope wire size: one session dictionary plus compact per-message envelopes. The envelope stores short IDs for trace, source, target, message type, action, capabilities, StateRefs, and payload references. `ProtocolTypedPayloadBytes` is reported separately because large params/results are modeled as payload-store entries instead of repeated bus payload. `ProtocolCompactMessageBytes` is the full compact AMP message size, backed by Rust/msgpack helpers when Rust Core is installed. `ProtocolJsonWireBytes` is reported separately for readable JSON logs. `protocol_state_payload_bytes` is also separate because State payloads are persisted shared state, not repeatedly transmitted through the agent bus.
 
 ## Typed Envelope Communication
@@ -33,6 +35,11 @@ payload store: params/result payloads addressed by p ids
 ```
 
 This avoids retransmitting agent names, action strings, capability lists, full `state://...` refs, and large task/result payloads on every Agent handoff.
+Python builds the envelope dictionaries, then calls Rust Core `encode_typed_envelope_bytes` and `decode_typed_envelope_json_text` when the extension is installed. If the extension is unavailable, Python falls back to the compact payload codec.
+
+## CodeAct Execution
+
+`ExecutorAgent` implements a CodeAct-style tool step. It receives task and evidence summaries, asks the configured LLM to return Python code, extracts fenced or raw code, and falls back to deterministic validation code when no LLM is available. `Protocol Mode` executes the generated code through `SandboxRunner`, writes stdout, stderr, exit code, generated code, and executor metadata into `CodeResultState`, then passes that state to `SummarizerAgent`. The summarizer receives a compact execution summary in `params["code_result"]` and can include the sandbox result in its final answer and memory write.
 
 ## Rust Core Optimization
 

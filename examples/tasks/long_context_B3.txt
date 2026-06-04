@@ -1,0 +1,9 @@
+Task LC-B3: Triage bugs in a protocol-based multi-agent runtime.
+
+Context block: Bugs may occur in message validation, state reference parsing, memory reuse counters, sandbox timeout handling, LLM fallback behavior, typed envelope dictionary mismatch, or benchmark aggregation. The agents should isolate the failure class, retrieve related prior memory, run a small validation snippet, and summarize a fix strategy.
+
+Repeated evidence: Protocol systems fail differently from plain text systems. A plain text baseline mainly risks context bloat and ambiguity. A structured protocol system risks schema drift, payload-store inconsistency, stale state references, dictionary mismatch, or incorrect metric attribution. This repeated diagnostic context should be passed compactly in Protocol Mode through StateRefs and typed envelope IDs.
+
+Repeated evidence: Protocol systems fail differently from plain text systems. A plain text baseline mainly risks context bloat and ambiguity. A structured protocol system risks schema drift, payload-store inconsistency, stale state references, dictionary mismatch, or incorrect metric attribution. This repeated diagnostic context should be passed compactly in Protocol Mode through StateRefs and typed envelope IDs.
+
+Deliverable: classify likely bugs and propose targeted verification commands.

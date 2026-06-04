@@ -20,6 +20,30 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert text_result.metrics.text_chars > 0
     assert text_result.metrics.communication_model == "plain_text"
     assert text_result.metrics.wire_bytes > 0
+    assert text_result.metrics.text_wire_bytes == text_result.metrics.wire_bytes
+    assert text_result.metrics.structured_handoff_bytes == 0
+    assert text_result.metrics.session_dictionary_bytes == 0
+    assert text_result.metrics.typed_envelope_bytes == 0
+    assert text_result.metrics.typed_payload_bytes == 0
+    assert text_result.metrics.structured_message_bytes == 0
+    assert text_result.metrics.compact_structured_message_bytes == 0
+    assert text_result.metrics.protocol_bytes == 0
+    assert text_result.metrics.state_transfer_count == 0
+    assert text_result.metrics.state_transfer_bytes == 0
+    assert text_result.metrics.rust_core_enabled is False
+    assert text_result.metrics.sandbox_backend == ""
+    assert text_result.metrics.memory_query_count == 0
+    assert text_result.metrics.memory_hit_count == 0
+    text_messages = read_jsonl(paths.text_messages)
+    assert [item["source_agent"] for item in text_messages] == [
+        "planner",
+        "retriever",
+        "executor",
+        "summarizer",
+    ]
+    assert text_messages[0]["content"] == task.read_text(encoding="utf-8")
+    assert all("state://" not in item["content"] for item in text_messages)
+    assert all("typed_envelope" not in item["content"] for item in text_messages)
     assert protocol_result.mode == "protocol"
     assert protocol_result.metrics.communication_model == "structured_state_ref"
     assert protocol_result.metrics.wire_bytes > 0
@@ -40,8 +64,9 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
         "planner",
         "memory_search",
         "retriever",
-        "sandbox",
         "executor",
+        "sandbox",
+        "code_result_state",
         "summarizer",
         "memory_write",
         "artifact_write",
