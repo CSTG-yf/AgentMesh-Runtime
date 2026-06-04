@@ -11,6 +11,7 @@
 | 6 | Benchmark runner and report generation | Completed | `tests/test_modes_and_benchmark.py` |
 | 7 | openEuler scripts and delivery docs | Completed | Equivalent commands verified; local Windows shell has no `make` |
 | 8 | Plan coverage audit and optional `.env` LLM config | Completed | `docs/implementation_audit.md`, `tests/test_config.py` |
+| 9 | Optional Rust Core acceleration, msgpack helpers, sandbox subprocess entrypoint | Completed | `tests/test_rust_*`, `tests/test_sandbox_runner.py` |
 
 Latest verified command:
 
@@ -19,6 +20,7 @@ uv sync --all-extras
 uv run ruff check .
 uv run mypy src
 uv run pytest
+uv run maturin develop --manifest-path crates/agentmesh-core/Cargo.toml
 uv run agentmesh --help
 uv run agentmesh run --mode protocol --task examples/tasks/A1_requirements.txt
 uv run agentmesh run --mode text --task examples/tasks/A1_requirements.txt
@@ -34,7 +36,8 @@ Results:
 
 - `ruff`: all checks passed.
 - `mypy`: no issues in 55 source files.
-- `pytest`: 36 tests passed.
+- `pytest`: 36 tests passed with Rust Core installed; Rust-only tests are skipped when `agentmesh_core` is not installed.
 - Protocol demo: produced `sandbox exit 0`.
 - Benchmark: 30 logical runs, `TokenSavingRate` about `0.7055`, `MemoryHitRate` about `0.9667`.
+- Rust Core: StateRef parsing, JSON/msgpack codec helpers, HashEmbedding, semantic top-k, and sandbox subprocess helper are implemented behind Python fallback boundaries.
 - `make all`: not run in this Windows shell because `make` is not installed.

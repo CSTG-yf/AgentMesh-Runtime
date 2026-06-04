@@ -79,6 +79,13 @@ uv sync --extra dev
 uv run maturin develop --manifest-path crates/agentmesh-core/Cargo.toml
 ```
 
+在 Windows PowerShell 中，如果同时存在 `VIRTUAL_ENV` 和 `CONDA_PREFIX` 导致 maturin 报错，可先运行：
+
+```powershell
+Remove-Item Env:CONDA_PREFIX -ErrorAction SilentlyContinue
+uv run maturin develop --manifest-path crates/agentmesh-core/Cargo.toml
+```
+
 未安装 Rust Core 时，项目会自动回退到纯 Python 实现。
 
 在 Linux/openEuler 环境中也可以使用：
