@@ -33,8 +33,8 @@ uv run agentmesh trace show
 Results:
 
 - `ruff`: all checks passed.
-- `mypy`: no issues in 46 source files.
-- `pytest`: 17 tests passed.
+- `mypy`: no issues in 55 source files.
+- `pytest`: 36 tests passed.
 - Protocol demo: produced `sandbox exit 0`.
-- Benchmark: 10 logical runs, `TokenSavingRate` about `0.7055`, `MemoryHitRate` `1.0`.
+- Benchmark: 30 logical runs, `TokenSavingRate` about `0.7055`, `MemoryHitRate` about `0.9667`.
 - `make all`: not run in this Windows shell because `make` is not installed.

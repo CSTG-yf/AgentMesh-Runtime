@@ -1,12 +1,18 @@
 import orjson
+import pytest
 
-from agentmesh.core import rust_core
+from agentmesh.core import rust_available, rust_core
 from agentmesh.protocol.codec import decode_message, encode_message
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
 from agentmesh.state.refs import parse_state_ref
 
+requires_rust_core = pytest.mark.skipif(
+    not rust_available(),
+    reason="agentmesh_core Rust extension is not installed",
+)
 
+@requires_rust_core
 def test_rust_state_ref_parser_returns_parts() -> None:
     state_type, state_id = rust_core().parse_state_ref_parts("state://text/state-abc")
 
@@ -14,10 +20,20 @@ def test_rust_state_ref_parser_returns_parts() -> None:
     assert state_id == "state-abc"
 
 
+@requires_rust_core
 def test_rust_json_codec_helpers_roundtrip_json() -> None:
     payload = {"b": 2, "a": ["x"]}
     encoded = rust_core().encode_json_bytes(orjson.dumps(payload).decode("utf-8"))
     decoded = orjson.loads(rust_core().decode_json_text(encoded))
+
+    assert decoded == payload
+
+
+@requires_rust_core
+def test_rust_msgpack_codec_helpers_roundtrip_json() -> None:
+    payload = {"b": 2, "a": ["x"], "nested": {"ok": True}}
+    encoded = rust_core().encode_msgpack_bytes(orjson.dumps(payload).decode("utf-8"))
+    decoded = orjson.loads(rust_core().decode_msgpack_json_text(encoded))
 
     assert decoded == payload
 

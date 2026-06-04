@@ -2,8 +2,15 @@ import hashlib
 import math
 import re
 
+import pytest
+
 from agentmesh.core import rust_available, rust_core
 from agentmesh.state.embedding import HashEmbeddingEncoder, cosine_similarity
+
+requires_rust_core = pytest.mark.skipif(
+    not rust_available(),
+    reason="agentmesh_core Rust extension is not installed",
+)
 
 
 def _python_reference_hash_embedding(text: str, dimensions: int) -> list[float]:
@@ -27,9 +34,8 @@ def _python_reference_hash_embedding(text: str, dimensions: int) -> list[float]:
     return [value / norm for value in vector]
 
 
+@requires_rust_core
 def test_rust_hash_embedding_matches_python_reference() -> None:
-    assert rust_available()
-
     text = "agent state passing memory"
     expected = _python_reference_hash_embedding(text, 384)
     actual = [float(value) for value in rust_core().hash_embedding(text, 384)]

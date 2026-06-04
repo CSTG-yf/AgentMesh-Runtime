@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 
 mod embedding;
 mod codec;
+mod sandbox_pool;
 mod state_ref;
 mod vector_index;
 
@@ -17,6 +18,9 @@ fn agentmesh_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(embedding::cosine_similarity_f32, m)?)?;
     m.add_function(wrap_pyfunction!(codec::encode_json_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(codec::decode_json_text, m)?)?;
+    m.add_function(wrap_pyfunction!(codec::encode_msgpack_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(codec::decode_msgpack_json_text, m)?)?;
+    m.add_function(wrap_pyfunction!(sandbox_pool::run_python_subprocess, m)?)?;
     m.add_function(wrap_pyfunction!(state_ref::parse_state_ref_parts, m)?)?;
     m.add_function(wrap_pyfunction!(vector_index::top_k_cosine, m)?)?;
     Ok(())

@@ -1,13 +1,20 @@
 from pathlib import Path
 
-from agentmesh.core import rust_core
+import pytest
+
+from agentmesh.core import rust_available, rust_core
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.sqlite_store import SQLiteMemoryStore
 from agentmesh.state.embedding import HashEmbeddingEncoder
 from agentmesh.state.store import StateStore
 from agentmesh.storage.paths import RuntimePaths
 
+requires_rust_core = pytest.mark.skipif(
+    not rust_available(),
+    reason="agentmesh_core Rust extension is not installed",
+)
 
+@requires_rust_core
 def test_rust_top_k_cosine_returns_best_indexes() -> None:
     indexes = rust_core().top_k_cosine(
         [1.0, 0.0],

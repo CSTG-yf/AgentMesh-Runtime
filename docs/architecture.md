@@ -22,5 +22,7 @@ Hot-path system primitives are exposed through an optional `agentmesh_core` Rust
 - HashEmbedding and cosine similarity.
 - Cosine top-k semantic search for memory retrieval.
 - Fast StateStore reload from the SQLite index instead of repeated JSONL replay.
+- JSON and msgpack codec helpers for protocol payload experiments.
+- Sandbox subprocess management entrypoint for future warm-runner integration.
 
 This preserves reproducible Python-level behavior while reducing runtime overhead in Protocol Mode.

@@ -12,7 +12,7 @@ AgentMesh-Runtime 是一个面向多 Agent 协作的轻量级运行时原型。�
 - StateStore：支持 text、embedding、summary、evidence、code_result、blob 等状态类型，并记录 lineage。
 - HashEmbedding：不依赖外部模型，使用本地 hash trick 生成确定性向量。
 - Shared Memory Store：基于 SQLite + FTS5，支持关键词检索、标签检索和语义检索。
-- Rust Core：可选 `agentmesh_core` 扩展加速 StateRef 解析、协议编码、HashEmbedding 和语义 top-k 检索。
+- Rust Core：可选 `agentmesh_core` 扩展加速 StateRef 解析、JSON/msgpack 协议编码、HashEmbedding、语义 top-k 检索，并提供 sandbox subprocess 管理入口。
 - SandboxRunner：用受限 subprocess 执行 Python 代码，结果写入 `CodeResultState`。
 - Benchmark Runner：对同一批连续任务分别运行 Text Mode 和 Protocol Mode，输出可复现实验数据。
 - Report Generator：自动生成 `runs/latest/experiment_report.md`。
@@ -76,7 +76,7 @@ uv run pytest
 
 ```bash
 uv sync --extra dev
-maturin develop --manifest-path crates/agentmesh-core/Cargo.toml
+uv run maturin develop --manifest-path crates/agentmesh-core/Cargo.toml
 ```
 
 未安装 Rust Core 时，项目会自动回退到纯 Python 实现。
