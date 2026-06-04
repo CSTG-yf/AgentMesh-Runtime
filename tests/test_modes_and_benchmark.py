@@ -20,6 +20,18 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert text_result.metrics.text_chars > 0
     assert protocol_result.mode == "protocol"
     assert protocol_result.metrics.state_transfer_count >= 4
+    assert set(protocol_result.metrics.stage_latency_ms) == {
+        "setup",
+        "state_task_embedding",
+        "planner",
+        "memory_search",
+        "retriever",
+        "sandbox",
+        "executor",
+        "summarizer",
+        "memory_write",
+        "artifact_write",
+    }
     assert paths.text_messages.exists()
     assert paths.protocol_states.exists()
 

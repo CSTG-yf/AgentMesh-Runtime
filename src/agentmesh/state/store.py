@@ -144,12 +144,14 @@ class StateStore:
         if consumer not in record.consumers:
             record.consumers.append(consumer)
         self._records[record.state_id] = record
+        self._upsert_index(record)
         append_jsonl(self.paths.protocol_states, record.model_dump(mode="json"))
 
     def mark_written_to_memory(self, ref: str) -> None:
         record, _payload = self.get(ref)
         record.written_to_memory = True
         self._records[record.state_id] = record
+        self._upsert_index(record)
 
     def list_by_trace(self, trace_id: str) -> list[StateRecord]:
         return [record for record in self._records.values() if record.trace_id == trace_id]
@@ -185,13 +187,14 @@ class StateStore:
         return record.ref
 
     def _load_records(self) -> None:
-        for row in read_jsonl(self.paths.protocol_states):
+        with self._connect() as conn:
+            rows = conn.execute("SELECT record_json FROM state_records").fetchall()
+        for row in rows:
             try:
-                record = StateRecord.model_validate(row)
+                record = StateRecord.model_validate_json(str(row[0]))
             except Exception:
                 continue
             self._records[record.state_id] = record
-            self._upsert_index(record)
 
     def _connect(self) -> sqlite3.Connection:
         self.paths.state_index.parent.mkdir(parents=True, exist_ok=True)
@@ -209,9 +212,30 @@ class StateStore:
                     payload_ref TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
-                    written_to_memory INTEGER NOT NULL
+                    written_to_memory INTEGER NOT NULL,
+                    record_json TEXT NOT NULL DEFAULT '{}'
                 )
                 """
+            )
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(state_records)").fetchall()
+            }
+            if "record_json" not in columns:
+                conn.execute(
+                    "ALTER TABLE state_records ADD COLUMN record_json TEXT NOT NULL DEFAULT '{}'"
+                )
+                self._backfill_record_json(conn)
+
+    def _backfill_record_json(self, conn: sqlite3.Connection) -> None:
+        for row in read_jsonl(self.paths.protocol_states):
+            try:
+                record = StateRecord.model_validate(row)
+            except Exception:
+                continue
+            conn.execute(
+                "UPDATE state_records SET record_json = ? WHERE state_id = ?",
+                (record.model_dump_json(), record.state_id),
             )
 
     def _upsert_index(self, record: StateRecord) -> None:
@@ -220,8 +244,8 @@ class StateStore:
                 """
                 INSERT OR REPLACE INTO state_records (
                     state_id, trace_id, state_type, producer, payload_ref, size_bytes,
-                    created_at, written_to_memory
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, written_to_memory, record_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.state_id,
@@ -232,5 +256,6 @@ class StateStore:
                     record.size_bytes,
                     record.created_at.isoformat(),
                     int(record.written_to_memory),
+                    record.model_dump_json(),
                 ),
             )

@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+from agentmesh.core import rust_available, rust_core
 from agentmesh.errors import ProtocolError
 from agentmesh.state.schema import StateType
 
@@ -14,6 +15,12 @@ def make_state_ref(state_type: StateType, state_id: str) -> str:
 
 
 def parse_state_ref(ref: str) -> ParsedStateRef:
+    if rust_available():
+        try:
+            state_type, state_id = rust_core().parse_state_ref_parts(ref)
+        except Exception as exc:
+            raise ProtocolError(str(exc)) from exc
+        return ParsedStateRef(state_type=StateType(state_type), state_id=state_id)
     prefix = "state://"
     if not ref.startswith(prefix):
         raise ProtocolError("StateRef must start with state://")

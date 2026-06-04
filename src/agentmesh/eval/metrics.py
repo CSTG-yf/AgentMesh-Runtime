@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RunMetrics(BaseModel):
@@ -11,6 +11,7 @@ class RunMetrics(BaseModel):
     memory_query_count: int = 0
     memory_hit_count: int = 0
     latency_ms: int = 0
+    stage_latency_ms: dict[str, int] = Field(default_factory=dict)
     answer_quality_score: float = 1.0
 
     @property

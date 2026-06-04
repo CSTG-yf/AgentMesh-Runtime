@@ -24,13 +24,21 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
     trace_id = f"trace-{uuid4().hex[:12]}"
     task = task_path.read_text(encoding="utf-8")
     start = time.perf_counter()
+    stage_latency_ms: dict[str, int] = {}
+
+    def mark_stage(name: str, stage_start: float) -> None:
+        stage_latency_ms[name] = int((time.perf_counter() - stage_start) * 1000)
+
+    stage_start = time.perf_counter()
     encoder = HashEmbeddingEncoder()
     state_store = StateStore(paths)
     memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
     registry = default_registry()
     context = RuntimeContext.from_paths(paths=paths, task_path=task_path, trace_id=trace_id)
     messages: list[AMPMessage] = []
+    mark_stage("setup", stage_start)
 
+    stage_start = time.perf_counter()
     for agent in registry.all():
         messages.extend([agent.hello(trace_id), agent.advertise_capabilities(trace_id)])
     messages.append(
@@ -81,10 +89,12 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
             msg_type=MsgType.STATE_REF,
             action="state.put_text",
             state_refs=[task_ref, query_ref],
-            result={"state_count": 2},
+        result={"state_count": 2},
         )
     )
+    mark_stage("state_task_embedding", stage_start)
 
+    stage_start = time.perf_counter()
     planner_invoke = AMPMessage(
         trace_id=trace_id,
         source_agent="runtime",
@@ -114,10 +124,15 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
             result={"state_count": 1},
         )
     )
+    mark_stage("planner", stage_start)
 
+    stage_start = time.perf_counter()
     memory_hits = memory_store.semantic_search(task)
     for hit in memory_hits:
         memory_store.increment_reuse(hit.memory_id)
+    mark_stage("memory_search", stage_start)
+
+    stage_start = time.perf_counter()
     retriever_invoke = AMPMessage(
         trace_id=trace_id,
         source_agent="planner",
@@ -152,8 +167,13 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
             result={"state_count": 1},
         )
     )
+    mark_stage("retriever", stage_start)
 
+    stage_start = time.perf_counter()
     sandbox_result = SandboxRunner(paths.sandbox_dir).run_python("print('agentmesh validation ok')")
+    mark_stage("sandbox", stage_start)
+
+    stage_start = time.perf_counter()
     executor_invoke = AMPMessage(
         trace_id=trace_id,
         source_agent="retriever",
@@ -182,7 +202,9 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
             result={"state_count": 1},
         )
     )
+    mark_stage("executor", stage_start)
 
+    stage_start = time.perf_counter()
     summary_text = (
         "Protocol Mode answer: structured collaboration completed with "
         f"{len(evidence)} evidence item(s) and sandbox exit {sandbox_result.exit_code}."
@@ -209,6 +231,9 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
         embedding=encoder.encode(summary_text),
         parent_state_refs=[summary_ref],
     )
+    mark_stage("summarizer", stage_start)
+
+    stage_start = time.perf_counter()
     unit = MemoryUnit(
         source_agent="summarizer",
         task_topic=task[:80] or "untitled",
@@ -234,11 +259,14 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
                 state_refs=unit.state_refs + unit.evidence_refs + [memory_embedding_ref],
             )
         )
+    mark_stage("memory_write", stage_start)
 
+    stage_start = time.perf_counter()
     for message in messages:
         append_jsonl(paths.protocol_messages, message.model_dump(mode="json"))
     protocol_bytes = sum(len(encode_message(message)) for message in messages)
     state_records = state_store.list_by_trace(trace_id)
+    mark_stage("artifact_write", stage_start)
     latency_ms = int((time.perf_counter() - start) * 1000)
     metrics = RunMetrics(
         message_count=len(messages),
@@ -250,6 +278,7 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
         memory_query_count=1,
         memory_hit_count=1 if memory_hits else 0,
         latency_ms=latency_ms,
+        stage_latency_ms=stage_latency_ms,
         answer_quality_score=deterministic_quality_score(summary_text),
     )
     append_jsonl(paths.protocol_trace, {"trace_id": trace_id, "metrics": metrics.model_dump()})

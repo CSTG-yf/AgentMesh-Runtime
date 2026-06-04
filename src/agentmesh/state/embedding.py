@@ -2,12 +2,16 @@ import hashlib
 import math
 import re
 
+from agentmesh.core import rust_available, rust_core
+
 
 class HashEmbeddingEncoder:
     def __init__(self, dimensions: int = 384) -> None:
         self.dimensions = dimensions
 
     def encode(self, text: str) -> list[float]:
+        if rust_available():
+            return [float(value) for value in rust_core().hash_embedding(text, self.dimensions)]
         tokens = re.findall(r"[a-z0-9]+", text.lower())
         if not tokens:
             return [0.0] * self.dimensions
@@ -29,6 +33,8 @@ class HashEmbeddingEncoder:
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
+    if rust_available():
+        return float(rust_core().cosine_similarity_f32(left, right))
     if len(left) != len(right):
         return 0.0
     left_norm = math.sqrt(sum(value * value for value in left))

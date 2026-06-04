@@ -1,0 +1,47 @@
+import hashlib
+import math
+import re
+
+from agentmesh.core import rust_available, rust_core
+from agentmesh.state.embedding import HashEmbeddingEncoder, cosine_similarity
+
+
+def _python_reference_hash_embedding(text: str, dimensions: int) -> list[float]:
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    if not tokens:
+        return [0.0] * dimensions
+    bigrams = [
+        f"{left}_{right}"
+        for left, right in zip(tokens, tokens[1:], strict=False)
+    ]
+    features = tokens + bigrams
+    vector = [0.0] * dimensions
+    for token in features:
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        bucket = int.from_bytes(digest[:4], "big") % dimensions
+        sign = 1.0 if digest[4] % 2 == 0 else -1.0
+        vector[bucket] += sign
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm == 0:
+        return vector
+    return [value / norm for value in vector]
+
+
+def test_rust_hash_embedding_matches_python_reference() -> None:
+    assert rust_available()
+
+    text = "agent state passing memory"
+    expected = _python_reference_hash_embedding(text, 384)
+    actual = [float(value) for value in rust_core().hash_embedding(text, 384)]
+
+    assert actual == expected
+
+
+def test_hash_embedding_is_deterministic() -> None:
+    encoder = HashEmbeddingEncoder(dimensions=384)
+    left = encoder.encode("agent state passing memory")
+    right = encoder.encode("agent state passing memory")
+
+    assert left == right
+    assert len(left) == 384
+    assert abs(cosine_similarity(left, right) - 1.0) < 1e-6

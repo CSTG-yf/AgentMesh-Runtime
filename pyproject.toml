@@ -19,6 +19,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
+    "maturin>=1.7.0",
 ]
 dashboard = [
     "fastapi>=0.111.0",

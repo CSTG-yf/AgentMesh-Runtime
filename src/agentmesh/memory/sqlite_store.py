@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import orjson
 
+from agentmesh.core import rust_available, rust_core
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.state.embedding import HashEmbeddingEncoder, cosine_similarity
 from agentmesh.state.store import StateStore
@@ -82,6 +83,8 @@ class SQLiteMemoryStore:
 
     def semantic_search(self, query: str, limit: int = 5) -> list[MemoryUnit]:
         query_embedding = self.encoder.encode(query)
+        units: list[MemoryUnit] = []
+        vectors: list[list[float]] = []
         scored: list[tuple[float, MemoryUnit]] = []
         for unit in self._all_units():
             if not unit.embedding_ref:
@@ -91,7 +94,13 @@ class SQLiteMemoryStore:
             except Exception:
                 continue
             if isinstance(payload, list):
+                vector = [float(value) for value in payload]
+                units.append(unit)
+                vectors.append(vector)
                 scored.append((cosine_similarity(query_embedding, payload), unit))
+        if rust_available() and vectors:
+            indexes = rust_core().top_k_cosine(query_embedding, vectors, limit)
+            return [units[int(index)] for index in indexes]
         scored.sort(key=lambda item: item[0], reverse=True)
         return [unit for _score, unit in scored[:limit]]
 
