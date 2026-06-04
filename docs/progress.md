@@ -11,7 +11,9 @@
 | 6 | Benchmark runner and report generation | Completed | `tests/test_modes_and_benchmark.py` |
 | 7 | openEuler scripts and delivery docs | Completed | Equivalent commands verified; local Windows shell has no `make` |
 | 8 | Plan coverage audit and optional `.env` LLM config | Completed | `docs/implementation_audit.md`, `tests/test_config.py` |
-| 9 | Optional Rust Core acceleration, msgpack helpers, sandbox subprocess entrypoint | Completed | `tests/test_rust_*`, `tests/test_sandbox_runner.py` |
+| 9 | Optional Rust Core acceleration, msgpack helpers, sandbox subprocess backend, warm worker reuse | Completed | `tests/test_rust_*`, `tests/test_sandbox_runner.py` |
+| 10 | LLM-backed real-agent state handoff in Protocol Mode | Completed | `tests/test_real_agent_protocol_mode.py` |
+| 11 | Explicit plain-text vs structured AMP/Rust communication comparison metrics | Completed | `tests/test_modes_and_benchmark.py` |
 
 Latest verified command:
 
@@ -36,8 +38,11 @@ Results:
 
 - `ruff`: all checks passed.
 - `mypy`: no issues in 55 source files.
-- `pytest`: 36 tests passed with Rust Core installed; Rust-only tests are skipped when `agentmesh_core` is not installed.
+- `pytest`: 41 tests passed with Rust Core installed; Rust-only tests are skipped when `agentmesh_core` is not installed.
 - Protocol demo: produced `sandbox exit 0`.
-- Benchmark: 30 logical runs, `TokenSavingRate` about `0.7055`, `MemoryHitRate` about `0.9667`.
-- Rust Core: StateRef parsing, JSON/msgpack codec helpers, HashEmbedding, semantic top-k, and sandbox subprocess helper are implemented behind Python fallback boundaries.
+- Real LLM Protocol demo: `trace-dcefca7cdce7`, final answer came from `SummarizerAgent` model output; LLM stages dominated latency (`planner` about `19.7s`, `retriever` about `30.2s`, `executor` about `22.1s`, `summarizer` about `23.6s`).
+- Benchmark: 30 logical runs, `TokenSavingRate` about `0.7055`, `WireBytesReductionRate` about `0.3300`, `TextWireBytes` `26418`, `ProtocolWireBytes` `17700`, `MemoryHitRate` about `0.9667`, `LatencyReductionRate` about `-524.29`.
+- Rust Core: StateRef parsing, JSON/msgpack codec helpers, HashEmbedding, semantic top-k, Rust sandbox backend, and warm worker reuse are implemented behind Python fallback boundaries.
+- Rust communication benchmark: Rust Core was available in all 30 protocol runs; `ProtocolCompactMessageBytes` was `242274` and readable `ProtocolJsonWireBytes` was `280404`. `RustSandboxBackendRuns` was `0` because `SandboxRunner` currently prefers the warm Python worker before falling back to Rust subprocess.
+- Warm worker profile: repeated Protocol Mode on the same run root reduced sandbox stage from about `69ms` to about `1ms`.
 - `make all`: not run in this Windows shell because `make` is not installed.

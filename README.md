@@ -12,8 +12,8 @@ AgentMesh-Runtime 是一个面向多 Agent 协作的轻量级运行时原型。�
 - StateStore：支持 text、embedding、summary、evidence、code_result、blob 等状态类型，并记录 lineage。
 - HashEmbedding：不依赖外部模型，使用本地 hash trick 生成确定性向量。
 - Shared Memory Store：基于 SQLite + FTS5，支持关键词检索、标签检索和语义检索。
-- Rust Core：可选 `agentmesh_core` 扩展加速 StateRef 解析、JSON/msgpack 协议编码、HashEmbedding、语义 top-k 检索，并提供 sandbox subprocess 管理入口。
-- SandboxRunner：用受限 subprocess 执行 Python 代码，结果写入 `CodeResultState`。
+- Rust Core：可选 `agentmesh_core` 扩展加速 StateRef 解析、JSON/msgpack 协议编码、HashEmbedding、语义 top-k 检索，并提供 Rust sandbox subprocess backend。
+- SandboxRunner：用受限 subprocess 执行 Python 代码；默认优先复用 warm worker，Rust Core 可用时可走 Rust backend，不可用时自动回退到 Python backend，结果写入 `CodeResultState`。
 - Benchmark Runner：对同一批连续任务分别运行 Text Mode 和 Protocol Mode，输出可复现实验数据。
 - Report Generator：自动生成 `runs/latest/experiment_report.md`。
 - openEuler 部署：提供 openEuler 24.03-LTS-SP3 安装和验证脚本。
@@ -87,6 +87,7 @@ uv run maturin develop --manifest-path crates/agentmesh-core/Cargo.toml
 ```
 
 未安装 Rust Core 时，项目会自动回退到纯 Python 实现。
+`SandboxResult.backend` 会标记当前代码执行使用的是 `warm_python`、`rust` 还是 `python` backend。
 
 在 Linux/openEuler 环境中也可以使用：
 
@@ -391,3 +392,32 @@ bash scripts/setup_openeuler.sh
 - Protocol Mode 中四个 Agent 在 LLM 配置可用时优先调用模型，调用失败会回退确定性逻辑。
 - `Blob` state 有 API 支持，默认 demo 主要展示 text、embedding、summary、evidence、code_result。
 - Dashboard/FastAPI 是第二阶段可选能力，当前未默认启用。
+## Real-agent LLM handoff
+
+`AGENTMESH_LLM_BASE_URL` uses an OpenAI-compatible Chat Completions endpoint. It can be either the API root, for example `https://api.example.com/v1`, or a full `/chat/completions` URL; the client normalizes it automatically.
+
+After `.env` is configured, Protocol Mode becomes a real model-backed multi-agent run:
+
+```bash
+uv run agentmesh run --mode protocol --task examples/tasks/A1_requirements.txt
+```
+
+The handoff is:
+
+```text
+PlannerAgent LLM output -> SummaryState(plan_ref)
+RetrieverAgent LLM output -> EvidenceState(evidence_ref)
+ExecutorAgent LLM validation -> CodeResultState(code_result_ref)
+SummarizerAgent LLM output -> final SummaryState + MemoryUnit + CLI answer
+```
+
+If an LLM call fails, the affected agent falls back to deterministic local behavior so offline benchmark runs remain reproducible.
+
+## Contest comparison target
+
+The benchmark compares two agent communication systems on the same tasks:
+
+- `Text Mode`: traditional baseline. Each agent sends the full accumulated text context to the next agent.
+- `Protocol Mode`: new system. Agents send structured AMP messages plus compact `state://...` refs; payloads live in `StateStore`, and Rust Core can accelerate codec, StateRef parsing, hash embedding, semantic top-k, and sandbox subprocess primitives.
+
+The benchmark summary now includes `WireBytesReductionRate`, `TextWireBytes`, `ProtocolWireBytes` (compact `STATE_REF` handoff payload), `ProtocolCompactMessageBytes` (full compact AMP transport), `ProtocolJsonWireBytes` (readable protocol log size), `ProtocolStatePayloadBytes`, `RustCoreEnabledRuns`, and `RustSandboxBackendRuns` in addition to token, latency, memory, and quality metrics.

@@ -29,16 +29,18 @@ class RuntimeContext(BaseModel):
         trace_id: str,
         task_path: Path | None = None,
         llm_client: LLMClient | None = None,
+        load_configured_llm: bool = True,
     ) -> "RuntimeContext":
         config = AgentMeshConfig.from_project_root(paths.root)
         prompts = PromptTemplateStore.from_project_root(paths.root, config.prompt_dir)
+        configured_client = create_llm_client(config) if load_configured_llm else None
         return cls(
             paths=paths,
             task_path=task_path,
             trace_id=trace_id,
             config=config,
             prompts=prompts,
-            llm_client=llm_client if llm_client is not None else create_llm_client(config),
+            llm_client=llm_client if llm_client is not None else configured_client,
         )
 
 

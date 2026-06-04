@@ -10,10 +10,11 @@ class SummarizerAgent(BaseAgent):
     capabilities = ["summary.create", "memory.put", "report.fragment"]
 
     def handle(self, message: AMPMessage, context: RuntimeContext) -> AMPMessage:
+        llm_summary: str | None = None
         summary = "AgentMesh Runtime completed a deterministic collaboration step."
         if context.llm_client is not None:
             try:
-                summary = context.llm_client.complete(
+                llm_summary = context.llm_client.complete(
                     agent_name=self.name,
                     messages=[
                         ChatMessage(
@@ -27,6 +28,7 @@ class SummarizerAgent(BaseAgent):
                     ],
                     variables={"input": ", ".join(message.state_refs)},
                 )
+                summary = llm_summary
             except Exception:
                 pass
         return AMPMessage(
@@ -35,6 +37,6 @@ class SummarizerAgent(BaseAgent):
             target_agent=message.source_agent,
             msg_type=MsgType.RESULT,
             action=message.action,
-            result={"summary": summary},
+            result={"summary": summary, "llm_summary": llm_summary},
             state_refs=message.state_refs,
         )

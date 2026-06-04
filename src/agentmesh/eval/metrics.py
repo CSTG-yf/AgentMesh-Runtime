@@ -5,9 +5,17 @@ class RunMetrics(BaseModel):
     message_count: int = 0
     text_chars: int = 0
     estimated_tokens: int = 0
+    communication_model: str = ""
+    wire_bytes: int = 0
+    text_wire_bytes: int = 0
+    structured_handoff_bytes: int = 0
+    structured_message_bytes: int = 0
+    compact_structured_message_bytes: int = 0
     protocol_bytes: int = 0
     state_transfer_count: int = 0
     state_transfer_bytes: int = 0
+    rust_core_enabled: bool = False
+    sandbox_backend: str = ""
     memory_query_count: int = 0
     memory_hit_count: int = 0
     latency_ms: int = 0

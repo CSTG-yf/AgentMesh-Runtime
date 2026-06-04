@@ -2,12 +2,14 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+from agentmesh.core import rust_available
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
 from agentmesh.eval.quality import deterministic_quality_score
+from agentmesh.llm.client import LLMClient
 from agentmesh.memory.policy import MemoryWritePolicy
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.sqlite_store import SQLiteMemoryStore
-from agentmesh.protocol.codec import encode_message
+from agentmesh.protocol.codec import encode_message, encode_message_compact, encode_payload_compact
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
 from agentmesh.runtime.orchestrator import default_registry
@@ -19,7 +21,12 @@ from agentmesh.storage.jsonl import append_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
 
-def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
+def run_protocol_mode(
+    task_path: Path,
+    paths: RuntimePaths,
+    llm_client: LLMClient | None = None,
+    load_configured_llm: bool = True,
+) -> ModeRunResult:
     paths.ensure()
     trace_id = f"trace-{uuid4().hex[:12]}"
     task = task_path.read_text(encoding="utf-8")
@@ -34,7 +41,13 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
     state_store = StateStore(paths)
     memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
     registry = default_registry()
-    context = RuntimeContext.from_paths(paths=paths, task_path=task_path, trace_id=trace_id)
+    context = RuntimeContext.from_paths(
+        paths=paths,
+        task_path=task_path,
+        trace_id=trace_id,
+        llm_client=llm_client,
+        load_configured_llm=load_configured_llm,
+    )
     messages: list[AMPMessage] = []
     mark_stage("setup", stage_start)
 
@@ -64,6 +77,7 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
                 "executor": "tool.run_python",
                 "summarizer": "summary.create",
                 "llm_configured": context.config.llm.configured,
+                "llm_client_available": context.llm_client is not None,
             },
         )
     )
@@ -89,7 +103,7 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
             msg_type=MsgType.STATE_REF,
             action="state.put_text",
             state_refs=[task_ref, query_ref],
-        result={"state_count": 2},
+            result={"state_count": 2},
         )
     )
     mark_stage("state_task_embedding", stage_start)
@@ -110,8 +124,9 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
     plan_ref = state_store.put_summary(
         trace_id=trace_id,
         producer="planner",
-        summary="; ".join(planner_result.result["plan"]),
+        summary=_planner_summary(planner_result),
         parent_state_refs=[task_ref, query_ref],
+        metadata={"llm_used": _non_empty_text(planner_result.result.get("llm_plan")) is not None},
     )
     messages.append(
         AMPMessage(
@@ -155,6 +170,9 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
         producer="retriever",
         evidence=evidence,
         parent_state_refs=[task_ref, query_ref, plan_ref],
+        metadata={
+            "llm_used": any(item.get("title") == "llm-evidence" for item in evidence),
+        },
     )
     messages.append(
         AMPMessage(
@@ -185,11 +203,16 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
     messages.append(executor_invoke)
     executor_result = registry.get("executor").handle(executor_invoke, context)
     messages.append(executor_result)
+    code_result_payload = sandbox_result.model_dump()
+    code_result_payload["executor_result"] = executor_result.result
     code_result_ref = state_store.put_code_result(
         trace_id=trace_id,
         producer="executor",
-        result=sandbox_result.model_dump(),
+        result=code_result_payload,
         parent_state_refs=[evidence_ref],
+        metadata={
+            "llm_used": _non_empty_text(executor_result.result.get("llm_validation")) is not None
+        },
     )
     messages.append(
         AMPMessage(
@@ -205,10 +228,6 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
     mark_stage("executor", stage_start)
 
     stage_start = time.perf_counter()
-    summary_text = (
-        "Protocol Mode answer: structured collaboration completed with "
-        f"{len(evidence)} evidence item(s) and sandbox exit {sandbox_result.exit_code}."
-    )
     summarizer_invoke = AMPMessage(
         trace_id=trace_id,
         source_agent="executor",
@@ -218,12 +237,19 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
         state_refs=[task_ref, plan_ref, evidence_ref, code_result_ref],
     )
     messages.append(summarizer_invoke)
-    messages.append(registry.get("summarizer").handle(summarizer_invoke, context))
+    summarizer_result = registry.get("summarizer").handle(summarizer_invoke, context)
+    messages.append(summarizer_result)
+    model_summary = _non_empty_text(summarizer_result.result.get("llm_summary"))
+    summary_text = model_summary or (
+        "Protocol Mode answer: structured collaboration completed with "
+        f"{len(evidence)} evidence item(s) and sandbox exit {sandbox_result.exit_code}."
+    )
     summary_ref = state_store.put_summary(
         trace_id=trace_id,
         producer="summarizer",
         summary=summary_text,
         parent_state_refs=[task_ref, plan_ref, evidence_ref, code_result_ref],
+        metadata={"llm_used": model_summary is not None},
     )
     memory_embedding_ref = state_store.put_embedding(
         trace_id=trace_id,
@@ -265,16 +291,26 @@ def run_protocol_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
     for message in messages:
         append_jsonl(paths.protocol_messages, message.model_dump(mode="json"))
     protocol_bytes = sum(len(encode_message(message)) for message in messages)
+    compact_protocol_bytes = sum(len(encode_message_compact(message)) for message in messages)
+    handoff_bytes = _handoff_wire_bytes(messages)
     state_records = state_store.list_by_trace(trace_id)
+    state_transfer_bytes = sum(record.size_bytes for record in state_records)
     mark_stage("artifact_write", stage_start)
     latency_ms = int((time.perf_counter() - start) * 1000)
     metrics = RunMetrics(
         message_count=len(messages),
         text_chars=len(task),
         estimated_tokens=estimate_tokens(task),
+        communication_model="structured_state_ref",
+        wire_bytes=handoff_bytes,
+        structured_handoff_bytes=handoff_bytes,
+        structured_message_bytes=protocol_bytes,
+        compact_structured_message_bytes=compact_protocol_bytes,
         protocol_bytes=protocol_bytes,
         state_transfer_count=len(state_records),
-        state_transfer_bytes=sum(record.size_bytes for record in state_records),
+        state_transfer_bytes=state_transfer_bytes,
+        rust_core_enabled=rust_available(),
+        sandbox_backend=sandbox_result.backend,
         memory_query_count=1,
         memory_hit_count=1 if memory_hits else 0,
         latency_ms=latency_ms,
@@ -292,3 +328,42 @@ def _derive_tags(text: str) -> list[str]:
         if candidate in lowered:
             tags.append(candidate)
     return tags or ["general"]
+
+
+def _planner_summary(message: AMPMessage) -> str:
+    steps = message.result.get("plan", [])
+    if not isinstance(steps, list):
+        steps = []
+    deterministic_plan = "; ".join(str(step) for step in steps)
+    llm_plan = _non_empty_text(message.result.get("llm_plan"))
+    if llm_plan is None:
+        return deterministic_plan
+    if not deterministic_plan:
+        return llm_plan
+    return f"{deterministic_plan}\n\nLLM plan:\n{llm_plan}"
+
+
+def _non_empty_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _handoff_wire_bytes(messages: list[AMPMessage]) -> int:
+    total = 0
+    for message in messages:
+        if message.msg_type != MsgType.STATE_REF or not message.state_refs:
+            continue
+        total += len(
+            encode_payload_compact(
+                {
+                    "source_agent": message.source_agent,
+                    "target_agent": message.target_agent,
+                    "msg_type": message.msg_type.value,
+                    "action": message.action,
+                    "state_refs": message.state_refs,
+                }
+            )
+        )
+    return total

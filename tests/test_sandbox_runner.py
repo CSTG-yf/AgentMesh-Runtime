@@ -15,7 +15,12 @@ requires_rust_core = pytest.mark.skipif(
 
 
 def test_sandbox_runner_captures_structured_result(tmp_path: Path) -> None:
-    runner = SandboxRunner(base_dir=tmp_path, limits=SandboxLimits(timeout_seconds=2))
+    runner = SandboxRunner(
+        base_dir=tmp_path,
+        limits=SandboxLimits(timeout_seconds=2),
+        use_warm_worker=False,
+        use_rust=False,
+    )
 
     result = runner.run_python("print(2 + 3)")
 
@@ -23,10 +28,16 @@ def test_sandbox_runner_captures_structured_result(tmp_path: Path) -> None:
     assert result.stdout.strip() == "5"
     assert result.stderr == ""
     assert result.latency_ms >= 0
+    assert result.backend == "python"
 
 
 def test_sandbox_runner_raises_timeout(tmp_path: Path) -> None:
-    runner = SandboxRunner(base_dir=tmp_path, limits=SandboxLimits(timeout_seconds=0.1))
+    runner = SandboxRunner(
+        base_dir=tmp_path,
+        limits=SandboxLimits(timeout_seconds=0.1),
+        use_warm_worker=False,
+        use_rust=False,
+    )
 
     with pytest.raises(SandboxTimeoutError):
         runner.run_python("import time\ntime.sleep(2)")
@@ -58,3 +69,50 @@ def test_rust_sandbox_subprocess_times_out(tmp_path: Path) -> None:
             100,
             8_000,
         )
+
+
+@requires_rust_core
+def test_sandbox_runner_uses_warm_backend_by_default(tmp_path: Path) -> None:
+    runner = SandboxRunner(base_dir=tmp_path, limits=SandboxLimits(timeout_seconds=2))
+
+    result = runner.run_python("print('warm backend')")
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "warm backend"
+    assert result.backend == "warm_python"
+
+
+@requires_rust_core
+def test_sandbox_runner_uses_rust_backend_when_warm_worker_is_disabled(
+    tmp_path: Path,
+) -> None:
+    runner = SandboxRunner(
+        base_dir=tmp_path,
+        limits=SandboxLimits(timeout_seconds=2),
+        use_warm_worker=False,
+    )
+
+    result = runner.run_python("print('rust backend')")
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "rust backend"
+    assert result.backend == "rust"
+
+
+@requires_rust_core
+def test_sandbox_runner_maps_rust_timeout_to_sandbox_error(tmp_path: Path) -> None:
+    runner = SandboxRunner(
+        base_dir=tmp_path,
+        limits=SandboxLimits(timeout_seconds=0.1),
+        use_warm_worker=False,
+    )
+
+    with pytest.raises(SandboxTimeoutError):
+        runner.run_python("import time\ntime.sleep(2)")
+
+
+def test_sandbox_runner_maps_warm_worker_timeout_to_sandbox_error(tmp_path: Path) -> None:
+    runner = SandboxRunner(base_dir=tmp_path, limits=SandboxLimits(timeout_seconds=0.1))
+
+    with pytest.raises(SandboxTimeoutError):
+        runner.run_python("import time\ntime.sleep(2)")

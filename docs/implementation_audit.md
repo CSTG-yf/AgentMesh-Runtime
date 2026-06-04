@@ -22,7 +22,7 @@ Source reviewed: `AgentMesh_Runtime_项目落地计划书.md`
 | Shared Memory Store | Implemented | `memory/sqlite_store.py`, `MemoryUnit`, `memory_fts` |
 | Keyword, tag, semantic memory search | Implemented | CLI and tests cover all three modes |
 | MemoryScorer and MemoryWritePolicy | Implemented | `memory/scorer.py`, `memory/policy.py` |
-| SandboxRunner / CodeResultState | Implemented | `sandbox/runner.py`, `crates/agentmesh-core/src/sandbox_pool.rs`, Protocol Mode writes `code_result` state |
+| SandboxRunner / CodeResultState | Implemented | `sandbox/runner.py`, `crates/agentmesh-core/src/sandbox_pool.rs`, Protocol Mode writes `code_result` state with backend metadata |
 | Benchmark Runner | Implemented | `eval/benchmark.py`, `examples/benchmarks/continuous_tasks.yaml` |
 | experiment_report.md generation | Implemented | `eval/report.py`, `agentmesh report` |
 | openEuler deployment scripts/docs | Implemented | `scripts/setup_openeuler.sh`, `docs/openeuler_deploy.md` |
@@ -34,6 +34,7 @@ Source reviewed: `AgentMesh_Runtime_项目落地计划书.md`
 - `.env` is reserved for user-provided LLM provider settings and is intentionally ignored by git.
 - `AGENTMESH_LLM_*` variables are loaded into `RuntimeContext`; secrets are masked during JSON serialization.
 - Rust Core now exposes JSON and msgpack codec helpers; current state payloads still use JSON/raw file paths to avoid changing public interfaces.
+- SandboxRunner defaults to a reusable warm Python worker to reduce repeated interpreter cold starts. It can also use the Rust subprocess backend when `agentmesh_core` is installed, and falls back to the Python subprocess backend otherwise.
 - Dashboard/FastAPI remains optional second-stage work, as stated in the plan.
 
 ## Recommended Next Enhancements

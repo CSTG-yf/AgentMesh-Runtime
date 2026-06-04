@@ -14,9 +14,11 @@ def run_text_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
     task = task_path.read_text(encoding="utf-8")
     start = time.perf_counter()
     context = task
+    text_wire_bytes = 0
     agents = ["planner", "retriever", "executor", "summarizer"]
     for index, agent in enumerate(agents):
         target = agents[index + 1] if index + 1 < len(agents) else "runtime"
+        text_wire_bytes += len(context.encode("utf-8"))
         append_jsonl(
             paths.text_messages,
             {
@@ -33,6 +35,9 @@ def run_text_mode(task_path: Path, paths: RuntimePaths) -> ModeRunResult:
         message_count=len(agents),
         text_chars=sum(len(item) for item in [task, context]),
         estimated_tokens=estimate_tokens(task) + estimate_tokens(context),
+        communication_model="plain_text",
+        wire_bytes=text_wire_bytes,
+        text_wire_bytes=text_wire_bytes,
         latency_ms=latency_ms,
         answer_quality_score=deterministic_quality_score(answer),
     )
