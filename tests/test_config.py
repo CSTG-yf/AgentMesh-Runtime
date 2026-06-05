@@ -53,6 +53,26 @@ def test_config_loads_tei_embedding_settings(tmp_path: Path) -> None:
     assert config.embedding.tei_configured
 
 
+def test_config_loads_memory_maintenance_settings(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "AGENTMESH_MEMORY_MAINTENANCE_ENABLED=false",
+                "AGENTMESH_MEMORY_MAINTENANCE_INTERVAL_SECONDS=12",
+                "AGENTMESH_MEMORY_MAX_BACKGROUND_ITEMS=7",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = AgentMeshConfig.from_env_file(env_file)
+
+    assert not config.memory.maintenance_enabled
+    assert config.memory.maintenance_interval_seconds == 12.0
+    assert config.memory.maintenance_max_items == 7
+
+
 def test_protocol_mode_receives_optional_llm_config_from_env(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         "\n".join(

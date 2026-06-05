@@ -33,9 +33,16 @@ class EmbeddingConfig(BaseModel):
         return self.provider == "tei" and bool(self.base_url)
 
 
+class MemoryConfig(BaseModel):
+    maintenance_enabled: bool = True
+    maintenance_interval_seconds: float = 60.0
+    maintenance_max_items: int = 20
+
+
 class AgentMeshConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     prompt_dir: Path | None = None
 
     @classmethod
@@ -55,6 +62,18 @@ class AgentMeshConfig(BaseModel):
         embedding_provider = _first_present(values, "AGENTMESH_EMBEDDING_PROVIDER") or "hash"
         embedding_dimensions_raw = _first_present(values, "AGENTMESH_EMBEDDING_DIMENSIONS")
         embedding_timeout_raw = _first_present(values, "AGENTMESH_EMBEDDING_TIMEOUT_SECONDS")
+        maintenance_enabled_raw = _first_present(
+            values,
+            "AGENTMESH_MEMORY_MAINTENANCE_ENABLED",
+        )
+        maintenance_interval_raw = _first_present(
+            values,
+            "AGENTMESH_MEMORY_MAINTENANCE_INTERVAL_SECONDS",
+        )
+        maintenance_max_items_raw = _first_present(
+            values,
+            "AGENTMESH_MEMORY_MAX_BACKGROUND_ITEMS",
+        )
         prompt_dir_raw = _first_present(values, "AGENTMESH_PROMPT_DIR")
         timeout = 30.0
         if timeout_raw:
@@ -65,6 +84,12 @@ class AgentMeshConfig(BaseModel):
         embedding_timeout = 15.0
         if embedding_timeout_raw:
             embedding_timeout = float(embedding_timeout_raw)
+        maintenance_interval = 60.0
+        if maintenance_interval_raw:
+            maintenance_interval = float(maintenance_interval_raw)
+        maintenance_max_items = 20
+        if maintenance_max_items_raw:
+            maintenance_max_items = int(maintenance_max_items_raw)
         return cls(
             llm=LLMConfig(
                 base_url=_first_present(values, "AGENTMESH_LLM_BASE_URL", "OPENAI_BASE_URL"),
@@ -79,6 +104,11 @@ class AgentMeshConfig(BaseModel):
                 or "BAAI/bge-small-zh-v1.5",
                 dimensions=embedding_dimensions,
                 timeout_seconds=embedding_timeout,
+            ),
+            memory=MemoryConfig(
+                maintenance_enabled=_parse_bool(maintenance_enabled_raw, default=True),
+                maintenance_interval_seconds=maintenance_interval,
+                maintenance_max_items=maintenance_max_items,
             ),
             prompt_dir=Path(prompt_dir_raw) if prompt_dir_raw else None,
         )
@@ -106,3 +136,9 @@ def _read_dotenv(path: Path) -> dict[str, str]:
         if key:
             parsed[key] = value
     return parsed
+
+
+def _parse_bool(value: str | None, *, default: bool) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}

@@ -9,12 +9,14 @@ from agentmesh.chat.session import ChatTurn, run_chat_turn
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.compare import run_prompt_compare
 from agentmesh.eval.report import generate_report
+from agentmesh.memory.hybrid_store import HybridMemoryStore
+from agentmesh.memory.maintenance import MemoryMaintenanceWorker
 from agentmesh.memory.sqlite_store import SQLiteMemoryStore
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.shell.session import run_shell
-from agentmesh.state.embedding import HashEmbeddingEncoder
+from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
@@ -139,8 +141,13 @@ def memory_search(
     root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
 ) -> None:
     paths = RuntimePaths(root=root)
+    context = RuntimeContext.from_paths(paths=paths, trace_id="trace-memory-cli")
     state_store = StateStore(paths)
-    store = SQLiteMemoryStore(paths, state_store, HashEmbeddingEncoder())
+    store = HybridMemoryStore(
+        paths=paths,
+        state_store=state_store,
+        encoder=create_embedding_encoder(context.config.embedding),
+    )
     if keyword:
         results = store.keyword_search(keyword)
     elif tag:
@@ -152,6 +159,50 @@ def memory_search(
         raise typer.Exit(code=1)
     for item in results:
         console.print(item.model_dump())
+
+
+@memory_app.command("stats")
+def memory_stats(
+    root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+) -> None:
+    paths = RuntimePaths(root=root)
+    context = RuntimeContext.from_paths(paths=paths, trace_id="trace-memory-stats")
+    state_store = StateStore(paths)
+    encoder = create_embedding_encoder(context.config.embedding)
+    run_store = SQLiteMemoryStore(paths, state_store, encoder, db_path=paths.memory_db)
+    global_store = SQLiteMemoryStore(
+        paths,
+        state_store,
+        encoder,
+        db_path=paths.global_memory_db,
+        log_writes=False,
+    )
+    run_units = run_store.all_units()
+    global_units = global_store.all_units()
+    console.print(
+        {
+            "run_memory_db": str(paths.memory_db),
+            "global_memory_db": str(paths.global_memory_db),
+            "run_units": len(run_units),
+            "global_units": len(global_units),
+            "global_active": sum(1 for unit in global_units if unit.status == "active"),
+            "global_archived": sum(1 for unit in global_units if unit.status == "archived"),
+        }
+    )
+
+
+@memory_app.command("archive")
+def memory_archive(
+    root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+) -> None:
+    paths = RuntimePaths(root=root)
+    context = RuntimeContext.from_paths(paths=paths, trace_id="trace-memory-archive")
+    worker = MemoryMaintenanceWorker(
+        paths=paths,
+        state_store=StateStore(paths),
+        encoder=create_embedding_encoder(context.config.embedding),
+    )
+    console.print(worker.run_once())
 
 
 @trace_app.command("show")

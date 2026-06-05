@@ -12,7 +12,8 @@ from agentmesh.core import rust_available
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.compare import run_prompt_compare
 from agentmesh.eval.report import generate_report
-from agentmesh.memory.sqlite_store import SQLiteMemoryStore
+from agentmesh.memory.hybrid_store import HybridMemoryStore
+from agentmesh.memory.maintenance import MemoryMaintenanceConfig, MemoryMaintenanceWorker
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.runtime.registry import RuntimeContext
@@ -39,18 +40,34 @@ class ShellSession:
         self.console = console or Console()
         self.context = RuntimeContext.from_paths(paths=paths, trace_id="trace-shell")
         self.history: list[ChatTurn] = []
+        self.state_store = StateStore(paths)
+        self.embedding_encoder = create_embedding_encoder(self.context.config.embedding)
+        self.maintenance = MemoryMaintenanceWorker(
+            paths=paths,
+            state_store=self.state_store,
+            encoder=self.embedding_encoder,
+            config=MemoryMaintenanceConfig(
+                enabled=self.context.config.memory.maintenance_enabled,
+                interval_seconds=self.context.config.memory.maintenance_interval_seconds,
+                max_items=self.context.config.memory.maintenance_max_items,
+            ),
+        )
 
     def run(self, input_func: InputFunc | None = None) -> None:
         prompt = input_func or (lambda label: Prompt.ask(label))
         self.console.print("[bold]AgentMesh shell[/bold] (输入 /help 查看命令，/exit 退出)")
-        while True:
-            try:
-                line = prompt("agentmesh")
-            except (EOFError, KeyboardInterrupt):
-                self.console.print()
-                return
-            if not self.handle_line(line):
-                return
+        self.maintenance.start()
+        try:
+            while True:
+                try:
+                    line = prompt("agentmesh")
+                except (EOFError, KeyboardInterrupt):
+                    self.console.print()
+                    return
+                if not self.handle_line(line):
+                    return
+        finally:
+            self.maintenance.stop()
 
     def handle_line(self, line: str) -> bool:
         command = parse_shell_line(line)
@@ -150,11 +167,10 @@ class ShellSession:
             self.console.print("[red]Usage:[/red] /memory --keyword|--tag|--semantic <query>")
             return
         query = join_prompt(args[1:])
-        config = AgentMeshConfig.from_project_root(self.paths.root)
-        store = SQLiteMemoryStore(
-            self.paths,
-            StateStore(self.paths),
-            create_embedding_encoder(config.embedding),
+        store = HybridMemoryStore(
+            paths=self.paths,
+            state_store=self.state_store,
+            encoder=self.embedding_encoder,
         )
         if args[0] == "--keyword":
             results = store.keyword_search(query)
@@ -183,6 +199,8 @@ class ShellSession:
                 "embedding_base_url": config.embedding.base_url or "",
                 "embedding_model": config.embedding.model,
                 "embedding_dimensions": config.embedding.dimensions,
+                "memory_maintenance_enabled": config.memory.maintenance_enabled,
+                "global_memory_db": self.paths.global_memory_db,
                 "rust_available": rust_available(),
             },
         )

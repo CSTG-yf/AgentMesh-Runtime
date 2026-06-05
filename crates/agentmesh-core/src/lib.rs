@@ -26,5 +26,6 @@ fn agentmesh_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sandbox_pool::run_python_subprocess, m)?)?;
     m.add_function(wrap_pyfunction!(state_ref::parse_state_ref_parts, m)?)?;
     m.add_function(wrap_pyfunction!(vector_index::top_k_cosine, m)?)?;
+    m.add_function(wrap_pyfunction!(vector_index::memory_rank_top_k, m)?)?;
     Ok(())
 }

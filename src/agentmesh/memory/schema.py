@@ -15,8 +15,17 @@ class MemoryUnit(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
     state_refs: list[str] = Field(default_factory=list)
     embedding_ref: str | None = None
+    embedding_vector: list[float] | None = Field(default=None, exclude=True)
     reuse_count: int = 0
     confidence: float = 0.0
     validity_score: float = 0.0
     reuse_policy: str = "verify"
     provenance_trace_id: str
+    status: str = "active"
+    importance_score: float = 0.0
+    last_compacted_at: datetime | None = None
+    archive_reason: str | None = None
+    source_memory_ids: list[str] = Field(default_factory=list)
+    memory_type: str = "task_summary"
+    domain: str = "general"
+    write_scope: str = "run"

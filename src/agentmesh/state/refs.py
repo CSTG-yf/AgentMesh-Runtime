@@ -15,7 +15,7 @@ def make_state_ref(state_type: StateType, state_id: str) -> str:
 
 
 def parse_state_ref(ref: str) -> ParsedStateRef:
-    if rust_available():
+    if rust_available() and hasattr(rust_core(), "parse_state_ref_parts"):
         try:
             state_type, state_id = rust_core().parse_state_ref_parts(ref)
         except Exception as exc:

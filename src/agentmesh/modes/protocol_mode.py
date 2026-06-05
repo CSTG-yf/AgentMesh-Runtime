@@ -7,9 +7,9 @@ from agentmesh.core import rust_available
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
 from agentmesh.eval.quality import deterministic_quality_score
 from agentmesh.llm.client import LLMClient
-from agentmesh.memory.policy import MemoryWritePolicy
+from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.schema import MemoryUnit
-from agentmesh.memory.sqlite_store import SQLiteMemoryStore
+from agentmesh.memory.tagger import LLMMemoryTagger
 from agentmesh.protocol.codec import (
     encode_message,
     encode_message_compact,
@@ -52,7 +52,7 @@ def run_protocol_mode(
         load_configured_llm=load_configured_llm,
     )
     encoder = create_embedding_encoder(context.config.embedding)
-    memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
+    memory_store = HybridMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
     registry = default_registry()
     messages: list[AMPMessage] = []
     mark_stage("setup", stage_start)
@@ -148,7 +148,8 @@ def run_protocol_mode(
     mark_stage("planner", stage_start)
 
     stage_start = time.perf_counter()
-    memory_hits = memory_store.semantic_search(task)
+    query_tags = _derive_tags(task)
+    memory_hits = memory_store.semantic_search(task, query_tags=query_tags)
     for hit in memory_hits:
         memory_store.increment_reuse(hit.memory_id)
     mark_stage("memory_search", stage_start)
@@ -273,29 +274,39 @@ def run_protocol_mode(
         parent_state_refs=[task_ref, plan_ref, evidence_ref, code_result_ref],
         metadata={"llm_used": model_summary is not None},
     )
+    memory_embedding = encoder.encode(summary_text)
     memory_embedding_ref = state_store.put_embedding(
         trace_id=trace_id,
         producer="summarizer",
-        embedding=encoder.encode(summary_text),
+        embedding=memory_embedding,
         parent_state_refs=[summary_ref],
     )
     mark_stage("summarizer", stage_start)
 
     stage_start = time.perf_counter()
+    classification = LLMMemoryTagger(context.llm_client).classify(
+        task=task,
+        summary=summary_text,
+        evidence_count=len(evidence),
+    )
     unit = MemoryUnit(
         source_agent="summarizer",
-        task_topic=task[:80] or "untitled",
+        task_topic=classification.topic,
         summary=summary_text,
-        tags=_derive_tags(task),
+        tags=classification.tags,
         evidence_refs=[evidence_ref],
         state_refs=[task_ref, plan_ref, code_result_ref, summary_ref],
         embedding_ref=memory_embedding_ref,
+        embedding_vector=memory_embedding,
         confidence=0.8,
         validity_score=1.0 if sandbox_result.exit_code == 0 else 0.3,
         provenance_trace_id=trace_id,
+        importance_score=classification.importance_score,
+        memory_type=classification.memory_type,
+        domain=classification.domain,
     )
-    if MemoryWritePolicy().should_write(unit):
-        memory_store.put(unit)
+    write_result = memory_store.put(unit)
+    if write_result["run_written"]:
         messages.append(
             AMPMessage(
                 trace_id=trace_id,
@@ -303,7 +314,11 @@ def run_protocol_mode(
                 target_agent="runtime",
                 msg_type=MsgType.MEMORY_PUT,
                 action="memory.put",
-                result={"memory_id": unit.memory_id},
+                result={
+                    "memory_id": unit.memory_id,
+                    "long_term_written": write_result["global_written"],
+                    "importance_score": unit.importance_score,
+                },
                 state_refs=unit.state_refs + unit.evidence_refs + [memory_embedding_ref],
             )
         )

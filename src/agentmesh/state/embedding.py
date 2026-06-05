@@ -23,7 +23,7 @@ class HashEmbeddingEncoder:
         self.dimensions = dimensions
 
     def encode(self, text: str) -> list[float]:
-        if rust_available():
+        if rust_available() and hasattr(rust_core(), "hash_embedding"):
             return [float(value) for value in rust_core().hash_embedding(text, self.dimensions)]
         tokens = re.findall(r"[a-z0-9]+", text.lower())
         if not tokens:
@@ -46,7 +46,7 @@ class HashEmbeddingEncoder:
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
-    if rust_available():
+    if rust_available() and hasattr(rust_core(), "cosine_similarity_f32"):
         return float(rust_core().cosine_similarity_f32(left, right))
     if len(left) != len(right):
         return 0.0

@@ -224,11 +224,21 @@ uv run maturin develop --manifest-path crates/agentmesh-core/Cargo.toml
 
 ## 共享记忆检索
 
+Protocol Mode 会先写入当前 run 记忆，并通过 `importance_score`、`validity_score`、`confidence`、记忆类型和摘要质量判断是否同步进入全局长期记忆库。长期记忆库位于 `data/agentmesh_memory.sqlite`，不会因为清理 `runs/latest` 而丢失。
+
+检索时会合并当前 run 记忆和全局长期记忆，并按语义相似度、有效性、置信度、复用次数、时间衰减和标签重合度综合排序。命中的历史记忆会作为结构化 evidence 注入后续 Agent 链路。
+
+如果安装了 Rust Core，综合排序会优先调用 `memory_rank_top_k`，在 Rust 中批量计算 cosine similarity、metadata score 和 top-k；未安装或版本不完整时自动回退 Python 实现。
+
 ```bash
 uv run agentmesh memory search --keyword protocol
 uv run agentmesh memory search --tag protocol
 uv run agentmesh memory search --semantic "agent state passing"
+uv run agentmesh memory stats
+uv run agentmesh memory archive
 ```
+
+`agentmesh shell` 启动时会按配置启动低频后台维护线程，对全局长期记忆做轻量归档，不阻塞主要多 Agent 任务。
 
 ## 运行产物
 

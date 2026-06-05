@@ -29,6 +29,10 @@ class RuntimePaths(BaseModel):
         return self.latest_run / "data"
 
     @property
+    def global_data_dir(self) -> Path:
+        return self.root / "data"
+
+    @property
     def state_payload_dir(self) -> Path:
         return self.data_dir / "states"
 
@@ -67,6 +71,14 @@ class RuntimePaths(BaseModel):
     @property
     def memory_db(self) -> Path:
         return self.data_dir / "memory.sqlite"
+
+    @property
+    def global_memory_db(self) -> Path:
+        return self.global_data_dir / "agentmesh_memory.sqlite"
+
+    @property
+    def memory_maintenance_log(self) -> Path:
+        return self.latest_run / "memory_maintenance.jsonl"
 
     @property
     def benchmark_summary(self) -> Path:

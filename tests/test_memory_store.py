@@ -61,3 +61,24 @@ def test_memory_policy_and_scorer_are_deterministic() -> None:
         evidence_coverage=1.0,
         time_decay=0.0,
     ) > 0.7
+
+
+def test_long_term_memory_policy_requires_importance_and_validity() -> None:
+    unit = MemoryUnit(
+        source_agent="summarizer",
+        task_topic="low value",
+        summary="This task has a summary but should not enter long term memory.",
+        tags=["general"],
+        evidence_refs=[],
+        state_refs=[],
+        confidence=0.8,
+        validity_score=0.9,
+        importance_score=0.2,
+        provenance_trace_id="trace-1",
+    )
+
+    policy = MemoryWritePolicy()
+
+    assert policy.should_write(unit)
+    assert not policy.should_write_long_term(unit)
+    assert policy.should_write_long_term(unit.model_copy(update={"importance_score": 0.8}))

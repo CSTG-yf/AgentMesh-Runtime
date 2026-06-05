@@ -29,6 +29,28 @@ def test_rust_top_k_cosine_returns_best_indexes() -> None:
     assert indexes == [1, 2]
 
 
+@requires_rust_core
+def test_rust_memory_rank_top_k_combines_similarity_and_metadata() -> None:
+    ranked = rust_core().memory_rank_top_k(
+        [1.0, 0.0],
+        [
+            [0.0, 1.0],
+            [0.8, 0.2],
+            [0.7, 0.3],
+        ],
+        [1.0, 0.9, 0.9],
+        [0.9, 0.9, 0.9],
+        [0.0, 1.0, 0.0],
+        [1.0, 1.0, 1.0],
+        [0.0, 0.0, 1.0],
+        2,
+    )
+
+    assert ranked[0][0] == 1
+    assert ranked[0][1] > ranked[1][1]
+    assert ranked[0][2] > 0.9
+
+
 def test_semantic_search_prefers_related_memory(tmp_path: Path) -> None:
     paths = RuntimePaths(root=tmp_path)
     state_store = StateStore(paths)
@@ -66,3 +88,51 @@ def test_semantic_search_prefers_related_memory(tmp_path: Path) -> None:
     results = store.semantic_search("state runtime optimization", limit=1)
 
     assert results[0].task_topic == "rust runtime"
+
+
+def test_semantic_search_uses_rust_memory_ranking_when_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    state_store = StateStore(paths)
+    encoder = HashEmbeddingEncoder()
+    store = SQLiteMemoryStore(paths, state_store, encoder)
+    embedding_ref = state_store.put_embedding(
+        "trace-1",
+        "tester",
+        encoder.encode("structured memory ranking"),
+    )
+    store.put(
+        MemoryUnit(
+            source_agent="tester",
+            task_topic="ranking",
+            summary="Structured memory ranking with Rust hot path.",
+            tags=["memory"],
+            embedding_ref=embedding_ref,
+            confidence=0.9,
+            validity_score=0.9,
+            provenance_trace_id="trace-1",
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    active_unit = store.active_units()[0]
+    assert active_unit.embedding_ref == embedding_ref
+    assert store._embedding_payload(active_unit) is not None
+
+    class FakeRustCore:
+        def memory_rank_top_k(self, *args: object) -> list[tuple[int, float, float]]:
+            calls.append({"args": args})
+            return [(0, 0.88, 0.77)]
+
+    monkeypatch.setattr("agentmesh.memory.sqlite_store.rust_available", lambda: True)
+    monkeypatch.setattr("agentmesh.memory.sqlite_store.rust_core", lambda: FakeRustCore())
+    monkeypatch.setattr("agentmesh.memory.sqlite_store._rust_memory_rank_available", lambda: True)
+
+    results = store.semantic_search_with_scores("memory ranking", limit=1)
+
+    assert calls
+    assert results[0].memory.task_topic == "ranking"
+    assert results[0].score == 0.88
+    assert results[0].semantic_similarity == 0.77

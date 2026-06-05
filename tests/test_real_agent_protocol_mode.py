@@ -41,6 +41,7 @@ def test_protocol_mode_uses_llm_outputs_as_agent_state(tmp_path: Path) -> None:
         "retriever",
         "executor",
         "summarizer",
+        "memory_tagger",
     }
 
     state_store = StateStore(paths)
