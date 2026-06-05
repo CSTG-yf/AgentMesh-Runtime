@@ -18,8 +18,10 @@ from agentmesh.protocol.codec import (
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.envelope import measure_typed_envelopes
 from agentmesh.protocol.schema import AMPMessage
+from agentmesh.runtime.decision import PlannerDecision
 from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
+from agentmesh.runtime.scheduler import ProtocolScheduler
 from agentmesh.sandbox.runner import SandboxRunner
 from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.store import StateStore
@@ -55,6 +57,7 @@ def run_protocol_mode(
     memory_store = HybridMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
     registry = default_registry()
     messages: list[AMPMessage] = []
+    scheduler = ProtocolScheduler(registry=registry, context=context, messages=messages)
     mark_stage("setup", stage_start)
 
     stage_start = time.perf_counter()
@@ -115,18 +118,13 @@ def run_protocol_mode(
     mark_stage("state_task_embedding", stage_start)
 
     stage_start = time.perf_counter()
-    planner_invoke = AMPMessage(
-        trace_id=trace_id,
+    planner_result = scheduler.invoke(
         source_agent="runtime",
-        target_agent="planner",
-        msg_type=MsgType.INVOKE,
         action="plan.create",
         params={"task": task},
         state_refs=[task_ref, query_ref],
     )
-    messages.append(planner_invoke)
-    planner_result = registry.get("planner").handle(planner_invoke, context)
-    messages.append(planner_result)
+    decision = _planner_decision(planner_result, task)
     plan_ref = state_store.put_summary(
         trace_id=trace_id,
         producer="planner",
@@ -147,131 +145,204 @@ def run_protocol_mode(
     )
     mark_stage("planner", stage_start)
 
-    stage_start = time.perf_counter()
     query_tags = _derive_tags(task)
-    memory_hits = memory_store.semantic_search(task, query_tags=query_tags)
-    for hit in memory_hits:
-        memory_store.increment_reuse(hit.memory_id)
-    mark_stage("memory_search", stage_start)
+    memory_hits = []
+    evidence: list[dict[str, Any]] = []
+    evidence_ref: str | None = None
+    refined_plan_ref: str | None = None
+    refined_evidence_ref: str | None = None
+    code_result_ref: str | None = None
+    code_result_payload: dict[str, Any] | None = None
+    code_result_summary = ""
+    tool_feedback: dict[str, Any] | None = None
+    feedback_round_count = 0
+    planner_refine_count = 0
+    retriever_refine_count = 0
+    tool_feedback_count = 0
+    sandbox_backend = ""
+    memory_query_count = 0
 
-    stage_start = time.perf_counter()
-    retriever_invoke = AMPMessage(
-        trace_id=trace_id,
-        source_agent="planner",
-        target_agent="retriever",
-        msg_type=MsgType.INVOKE,
-        action="memory.semantic_search",
-        params={"query": task},
-        state_refs=[task_ref, query_ref, plan_ref],
-    )
-    messages.append(retriever_invoke)
-    retriever_result = registry.get("retriever").handle(retriever_invoke, context)
-    messages.append(retriever_result)
-    evidence = list(retriever_result.result["evidence"])
-    evidence.extend(
-        {"title": unit.task_topic, "snippet": unit.summary, "memory_id": unit.memory_id}
-        for unit in memory_hits
-    )
-    evidence_ref = state_store.put_evidence(
-        trace_id=trace_id,
-        producer="retriever",
-        evidence=evidence,
-        parent_state_refs=[task_ref, query_ref, plan_ref],
-        metadata={
-            "llm_used": any(item.get("title") == "llm-evidence" for item in evidence),
-        },
-    )
-    messages.append(
-        AMPMessage(
-            trace_id=trace_id,
-            source_agent="retriever",
-            target_agent="executor",
-            msg_type=MsgType.STATE_REF,
-            action="state.put_evidence",
-            state_refs=[evidence_ref],
-            result={"state_count": 1},
+    if decision.need_retrieval:
+        stage_start = time.perf_counter()
+        memory_hits = memory_store.semantic_search(task, query_tags=query_tags)
+        for hit in memory_hits:
+            memory_store.increment_reuse(hit.memory_id)
+        memory_query_count = 1
+        mark_stage("memory_search", stage_start)
+
+        stage_start = time.perf_counter()
+        retriever_result = scheduler.invoke(
+            source_agent="planner",
+            action="memory.semantic_search",
+            params={"query": task},
+            state_refs=[task_ref, query_ref, plan_ref],
         )
-    )
-    mark_stage("retriever", stage_start)
-
-    stage_start = time.perf_counter()
-    evidence_digest = _evidence_digest(evidence)
-    executor_invoke = AMPMessage(
-        trace_id=trace_id,
-        source_agent="retriever",
-        target_agent="executor",
-        msg_type=MsgType.INVOKE,
-        action="tool.run_python",
-        params={"task": task, "evidence": evidence_digest},
-        state_refs=[evidence_ref],
-    )
-    messages.append(executor_invoke)
-    executor_result = registry.get("executor").handle(executor_invoke, context)
-    messages.append(executor_result)
-    mark_stage("executor", stage_start)
-
-    stage_start = time.perf_counter()
-    codeact_code = str(executor_result.result.get("codeact_code") or "")
-    sandbox_result = SandboxRunner(paths.sandbox_dir).run_python(codeact_code)
-    mark_stage("sandbox", stage_start)
-
-    stage_start = time.perf_counter()
-    code_result_payload = sandbox_result.model_dump()
-    code_result_payload["executor_result"] = executor_result.result
-    code_result_payload["codeact"] = {
-        "code": codeact_code,
-        "generated_by_llm": bool(executor_result.result.get("llm_generated_code")),
-        "stdout": sandbox_result.stdout,
-        "stderr": sandbox_result.stderr,
-        "exit_code": sandbox_result.exit_code,
-    }
-    code_result_ref = state_store.put_code_result(
-        trace_id=trace_id,
-        producer="executor",
-        result=code_result_payload,
-        parent_state_refs=[evidence_ref],
-        metadata={
-            "llm_used": bool(executor_result.result.get("llm_generated_code")),
-            "codeact": True,
-        },
-    )
-    messages.append(
-        AMPMessage(
-            trace_id=trace_id,
-            source_agent="executor",
-            target_agent="summarizer",
-            msg_type=MsgType.STATE_REF,
-            action="state.put_code_result",
-            state_refs=[code_result_ref],
-            result={"state_count": 1},
+        evidence = list(retriever_result.result["evidence"])
+        evidence.extend(
+            {"title": unit.task_topic, "snippet": unit.summary, "memory_id": unit.memory_id}
+            for unit in memory_hits
         )
-    )
-    mark_stage("code_result_state", stage_start)
+        evidence_ref = state_store.put_evidence(
+            trace_id=trace_id,
+            producer="retriever",
+            evidence=evidence,
+            parent_state_refs=[task_ref, query_ref, plan_ref],
+            metadata={
+                "llm_used": any(item.get("title") == "llm-evidence" for item in evidence),
+            },
+        )
+        messages.append(
+            AMPMessage(
+                trace_id=trace_id,
+                source_agent="retriever",
+                target_agent="executor" if decision.need_tool_execution else "summarizer",
+                msg_type=MsgType.STATE_REF,
+                action="state.put_evidence",
+                state_refs=[evidence_ref],
+                result={"state_count": 1},
+            )
+        )
+        mark_stage("retriever", stage_start)
+
+    if decision.need_tool_execution:
+        stage_start = time.perf_counter()
+        evidence_digest = _evidence_digest(evidence)
+        executor_result = scheduler.invoke(
+            source_agent="retriever" if evidence_ref else "planner",
+            action="tool.run_python",
+            params={"task": task, "evidence": evidence_digest},
+            state_refs=[ref for ref in [evidence_ref] if ref],
+        )
+        mark_stage("executor", stage_start)
+
+        stage_start = time.perf_counter()
+        codeact_code = str(executor_result.result.get("codeact_code") or "")
+        sandbox_result = SandboxRunner(paths.sandbox_dir).run_python(codeact_code)
+        sandbox_backend = sandbox_result.backend
+        mark_stage("sandbox", stage_start)
+
+        stage_start = time.perf_counter()
+        tool_feedback = _tool_feedback(task, sandbox_result.model_dump())
+        tool_feedback_count = 1
+        code_result_payload = sandbox_result.model_dump()
+        code_result_payload["executor_result"] = executor_result.result
+        code_result_payload["tool_feedback"] = tool_feedback
+        code_result_payload["codeact"] = {
+            "code": codeact_code,
+            "generated_by_llm": bool(executor_result.result.get("llm_generated_code")),
+            "stdout": sandbox_result.stdout,
+            "stderr": sandbox_result.stderr,
+            "exit_code": sandbox_result.exit_code,
+        }
+        parent_refs = [ref for ref in [evidence_ref] if ref]
+        code_result_ref = state_store.put_code_result(
+            trace_id=trace_id,
+            producer="executor",
+            result=code_result_payload,
+            parent_state_refs=parent_refs,
+            metadata={
+                "llm_used": bool(executor_result.result.get("llm_generated_code")),
+                "codeact": True,
+                "tool_feedback": True,
+            },
+        )
+        messages.append(
+            AMPMessage(
+                trace_id=trace_id,
+                source_agent="executor",
+                target_agent="summarizer",
+                msg_type=MsgType.STATE_REF,
+                action="state.put_code_result",
+                state_refs=[code_result_ref],
+                result={"state_count": 1},
+            )
+        )
+        mark_stage("code_result_state", stage_start)
+
+        recommended_actions = {
+            str(item.get("target_capability", ""))
+            for item in tool_feedback.get("recommended_next_actions", [])
+            if isinstance(item, dict)
+        }
+        feedback_refs = [ref for ref in [plan_ref, evidence_ref, code_result_ref] if ref]
+        if "plan.refine" in recommended_actions:
+            stage_start = time.perf_counter()
+            refined_plan_result = scheduler.invoke(
+                source_agent="executor",
+                action="plan.refine",
+                params={"task": task, "tool_feedback": tool_feedback},
+                state_refs=feedback_refs,
+            )
+            refined_plan_ref = state_store.put_summary(
+                trace_id=trace_id,
+                producer="planner",
+                summary="; ".join(refined_plan_result.result.get("refined_plan", [])),
+                parent_state_refs=feedback_refs,
+                metadata={"refined": True},
+            )
+            feedback_round_count = 1
+            planner_refine_count = 1
+            mark_stage("planner_refine", stage_start)
+        should_refine_evidence = (
+            "evidence.refine" in recommended_actions
+            or "memory.semantic_search" in recommended_actions
+        )
+        if should_refine_evidence:
+            stage_start = time.perf_counter()
+            refined_evidence_result = scheduler.invoke(
+                source_agent="planner" if refined_plan_ref else "executor",
+                action="evidence.refine",
+                params={"query": task, "tool_feedback": tool_feedback},
+                state_refs=feedback_refs + ([refined_plan_ref] if refined_plan_ref else []),
+            )
+            refined_items = list(refined_evidence_result.result.get("evidence", []))
+            evidence.extend(refined_items)
+            refined_evidence_ref = state_store.put_evidence(
+                trace_id=trace_id,
+                producer="retriever",
+                evidence=refined_items,
+                parent_state_refs=feedback_refs + ([refined_plan_ref] if refined_plan_ref else []),
+                metadata={"refined": True},
+            )
+            feedback_round_count = 1
+            retriever_refine_count = 1
+            mark_stage("retriever_refine", stage_start)
+        code_result_summary = _code_result_summary(code_result_payload)
 
     stage_start = time.perf_counter()
-    code_result_summary = _code_result_summary(code_result_payload)
-    summarizer_invoke = AMPMessage(
-        trace_id=trace_id,
-        source_agent="executor",
-        target_agent="summarizer",
-        msg_type=MsgType.INVOKE,
+    summary_state_refs = [
+        ref
+        for ref in [
+            task_ref,
+            plan_ref,
+            refined_plan_ref,
+            evidence_ref,
+            refined_evidence_ref,
+            code_result_ref,
+        ]
+        if ref
+    ]
+    summarizer_source = scheduler.selected_agents[-1] if scheduler.selected_agents else "planner"
+    summarizer_result = scheduler.invoke(
+        source_agent=summarizer_source,
         action="summary.create",
-        params={"code_result": code_result_summary},
-        state_refs=[task_ref, plan_ref, evidence_ref, code_result_ref],
+        params={
+            "code_result": code_result_summary,
+            "tool_feedback": tool_feedback or {},
+            "dynamic_route": scheduler.selected_agents,
+        },
+        state_refs=summary_state_refs,
     )
-    messages.append(summarizer_invoke)
-    summarizer_result = registry.get("summarizer").handle(summarizer_invoke, context)
-    messages.append(summarizer_result)
     model_summary = _non_empty_text(summarizer_result.result.get("llm_summary"))
     summary_text = model_summary or (
         "Protocol Mode answer: structured collaboration completed with "
-        f"{len(evidence)} evidence item(s) and sandbox exit {sandbox_result.exit_code}."
+        f"{len(evidence)} evidence item(s) and route {' -> '.join(scheduler.selected_agents)}."
     )
     summary_ref = state_store.put_summary(
         trace_id=trace_id,
         producer="summarizer",
         summary=summary_text,
-        parent_state_refs=[task_ref, plan_ref, evidence_ref, code_result_ref],
+        parent_state_refs=summary_state_refs,
         metadata={"llm_used": model_summary is not None},
     )
     memory_embedding = encoder.encode(summary_text)
@@ -294,12 +365,16 @@ def run_protocol_mode(
         task_topic=classification.topic,
         summary=summary_text,
         tags=classification.tags,
-        evidence_refs=[evidence_ref],
-        state_refs=[task_ref, plan_ref, code_result_ref, summary_ref],
+        evidence_refs=[ref for ref in [evidence_ref, refined_evidence_ref] if ref],
+        state_refs=[
+            ref
+            for ref in [task_ref, plan_ref, refined_plan_ref, code_result_ref, summary_ref]
+            if ref
+        ],
         embedding_ref=memory_embedding_ref,
         embedding_vector=memory_embedding,
         confidence=0.8,
-        validity_score=1.0 if sandbox_result.exit_code == 0 else 0.3,
+        validity_score=_validity_score(code_result_payload),
         provenance_trace_id=trace_id,
         importance_score=classification.importance_score,
         memory_type=classification.memory_type,
@@ -351,12 +426,23 @@ def run_protocol_mode(
         state_transfer_count=len(state_records),
         state_transfer_bytes=state_transfer_bytes,
         rust_core_enabled=rust_available(),
-        sandbox_backend=sandbox_result.backend,
-        memory_query_count=1,
+        sandbox_backend=sandbox_backend,
+        memory_query_count=memory_query_count,
         memory_hit_count=1 if memory_hits else 0,
         latency_ms=latency_ms,
         stage_latency_ms=stage_latency_ms,
         answer_quality_score=deterministic_quality_score(summary_text),
+        dynamic_route=scheduler.selected_agents,
+        selected_agents=list(dict.fromkeys(scheduler.selected_agents)),
+        skipped_agents=[
+            agent
+            for agent in ["planner", "retriever", "executor", "summarizer"]
+            if agent not in scheduler.selected_agents
+        ],
+        feedback_round_count=feedback_round_count,
+        planner_refine_count=planner_refine_count,
+        retriever_refine_count=retriever_refine_count,
+        tool_feedback_count=tool_feedback_count,
     )
     append_jsonl(paths.protocol_trace, {"trace_id": trace_id, "metrics": metrics.model_dump()})
     return ModeRunResult(mode="protocol", trace_id=trace_id, answer=summary_text, metrics=metrics)
@@ -371,6 +457,13 @@ def _derive_tags(text: str) -> list[str]:
     return tags or ["general"]
 
 
+def _planner_decision(message: AMPMessage, task: str) -> PlannerDecision:
+    try:
+        return PlannerDecision.model_validate(message.result.get("decision"))
+    except Exception:
+        return PlannerDecision.from_task(task)
+
+
 def _planner_summary(message: AMPMessage) -> str:
     steps = message.result.get("plan", [])
     if not isinstance(steps, list):
@@ -382,6 +475,53 @@ def _planner_summary(message: AMPMessage) -> str:
     if not deterministic_plan:
         return llm_plan
     return f"{deterministic_plan}\n\nLLM plan:\n{llm_plan}"
+
+
+def _tool_feedback(task: str, sandbox_payload: dict[str, Any]) -> dict[str, Any]:
+    stdout = str(sandbox_payload.get("stdout", "")).strip()
+    stderr = str(sandbox_payload.get("stderr", "")).strip()
+    exit_code = int(sandbox_payload.get("exit_code", 1))
+    evidence_gaps = []
+    if _requires_feedback_refine(task):
+        evidence_gaps.append("verify benchmark baseline and communication metrics")
+    recommended_next_actions = []
+    if evidence_gaps:
+        recommended_next_actions.extend(
+            [
+                {
+                    "target_capability": "plan.refine",
+                    "reason": "tool feedback identified missing validation context",
+                },
+                {
+                    "target_capability": "evidence.refine",
+                    "reason": "evidence gaps should be checked before summarization",
+                },
+            ]
+        )
+    return {
+        "status": "success" if exit_code == 0 else "error",
+        "exit_code": exit_code,
+        "stdout_summary": stdout[:500],
+        "stderr_summary": stderr[:300],
+        "validated_claims": ["sandbox execution completed"] if exit_code == 0 else [],
+        "failed_claims": [] if exit_code == 0 else ["sandbox execution failed"],
+        "evidence_gaps": evidence_gaps,
+        "recommended_next_actions": recommended_next_actions,
+    }
+
+
+def _requires_feedback_refine(task: str) -> bool:
+    lowered = task.lower()
+    return any(word in lowered for word in ["benchmark", "验证", "评测", "通信开销"])
+
+
+def _validity_score(code_result_payload: dict[str, Any] | None) -> float:
+    if code_result_payload is None:
+        return 1.0
+    try:
+        return 1.0 if int(code_result_payload.get("exit_code", 1)) == 0 else 0.3
+    except Exception:
+        return 0.3
 
 
 def _non_empty_text(value: object) -> str | None:

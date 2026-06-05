@@ -29,7 +29,10 @@ class AgentEchoLLMClient(LLMClient):
 
 def test_protocol_mode_uses_llm_outputs_as_agent_state(tmp_path: Path) -> None:
     task = tmp_path / "task.txt"
-    task.write_text("Design real agent state transfer across several agents.", encoding="utf-8")
+    task.write_text(
+        "Design and validate real agent state transfer across several agents.",
+        encoding="utf-8",
+    )
     paths = RuntimePaths(root=tmp_path)
     llm_client = AgentEchoLLMClient()
 

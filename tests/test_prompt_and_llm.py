@@ -41,6 +41,25 @@ def test_prompt_template_store_loads_custom_agent_prompt(tmp_path: Path) -> None
     )
 
 
+def test_default_agent_system_prompts_define_roles_and_boundaries(tmp_path: Path) -> None:
+    store = PromptTemplateStore.from_project_root(tmp_path)
+
+    planner = store.render("planner", {"task": "compare text and protocol agents"})
+    retriever = store.render("retriever", {"query": "memory reuse"})
+    executor = store.render("executor", {"input": "validate evidence"})
+    summarizer = store.render("summarizer", {"input": "state://summary/abc"})
+
+    assert "user intent recognition" in planner
+    assert "classify the task intent" in planner
+    assert "structured plan" in planner
+    assert "reusable memory" in retriever
+    assert "evidence" in retriever
+    assert "Return only Python code" in executor
+    assert "sandbox" in executor
+    assert "state references" in summarizer
+    assert "memory-worthy" in summarizer
+
+
 def test_openai_compatible_client_builds_masked_chat_request() -> None:
     captured: dict[str, object] = {}
 

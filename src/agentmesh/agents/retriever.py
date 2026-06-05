@@ -11,6 +11,7 @@ class RetrieverAgent(BaseAgent):
         "memory.keyword_search",
         "memory.tag_search",
         "memory.semantic_search",
+        "evidence.refine",
         "evidence.collect",
     ]
 
@@ -32,9 +33,12 @@ class RetrieverAgent(BaseAgent):
                 )
             except Exception:
                 llm_evidence = None
+        title = "deterministic-local-evidence"
+        if message.action == "evidence.refine":
+            title = "refined-local-evidence"
         evidence = [
             {
-                "title": "deterministic-local-evidence",
+                "title": title,
                 "snippet": f"Evidence for {query[:80]}",
             }
         ]

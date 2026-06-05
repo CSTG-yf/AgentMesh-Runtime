@@ -177,18 +177,28 @@ AGENTMESH_EMBEDDING_TIMEOUT_SECONDS=15
 
 ## CodeAct 执行链
 
-Protocol Mode 的工具执行链路如下：
+Protocol Mode 的工具执行链路支持动态 Agent 路由。`PlannerAgent` 会先做用户意图识别，输出结构化 `PlannerDecision`，运行时再按能力决定是否调用 `RetrieverAgent`、`ExecutorAgent` 和 `SummarizerAgent`：
+
+```text
+analysis route: PlannerAgent -> RetrieverAgent -> SummarizerAgent
+tool route:     PlannerAgent -> RetrieverAgent -> ExecutorAgent -> SummarizerAgent
+```
+
+当工具执行被唤起时，执行链路如下：
 
 ```text
 RetrieverAgent -> EvidenceState
 ExecutorAgent -> 生成 Python 代码
 SandboxRunner -> 执行 Python
 StateStore -> 写入 CodeResultState
+ToolFeedback -> 结构化反馈给 PlannerAgent / RetrieverAgent，最多 1 轮
 SummarizerAgent -> 读取 CodeAct 结果摘要并生成最终 SummaryState
 MemoryStore -> 写入 MemoryUnit
 ```
 
 没有配置 LLM 时，`ExecutorAgent` 会生成一段确定性 Python 校验代码；配置 LLM 后，会提示模型只返回 Python 代码，并在轻量沙箱中执行。
+
+动态调度指标包括 `dynamic_route`、`selected_agents`、`skipped_agents`、`feedback_round_count`、`planner_refine_count`、`retriever_refine_count` 和 `tool_feedback_count`。
 
 ## Typed Envelope 通信
 

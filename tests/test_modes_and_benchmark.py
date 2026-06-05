@@ -64,13 +64,12 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
         "planner",
         "memory_search",
         "retriever",
-        "executor",
-        "sandbox",
-        "code_result_state",
         "summarizer",
         "memory_write",
         "artifact_write",
     }
+    assert protocol_result.metrics.dynamic_route == ["planner", "retriever", "summarizer"]
+    assert "executor" in protocol_result.metrics.skipped_agents
     assert paths.text_messages.exists()
     assert paths.protocol_states.exists()
 

@@ -24,6 +24,13 @@ class RunMetrics(BaseModel):
     latency_ms: int = 0
     stage_latency_ms: dict[str, int] = Field(default_factory=dict)
     answer_quality_score: float = 1.0
+    dynamic_route: list[str] = Field(default_factory=list)
+    selected_agents: list[str] = Field(default_factory=list)
+    skipped_agents: list[str] = Field(default_factory=list)
+    feedback_round_count: int = 0
+    planner_refine_count: int = 0
+    retriever_refine_count: int = 0
+    tool_feedback_count: int = 0
 
     @property
     def memory_hit_rate(self) -> float:
