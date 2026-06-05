@@ -13,6 +13,7 @@ from agentmesh.memory.sqlite_store import SQLiteMemoryStore
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.runtime.registry import RuntimeContext
+from agentmesh.shell.session import run_shell
 from agentmesh.state.embedding import HashEmbeddingEncoder
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import read_jsonl
@@ -108,6 +109,14 @@ def chat(
         turn = run_chat_turn(user_input, context=context, history=history)
         history.append(turn)
         console.print(f"[bold]agentmesh[/bold]: {turn.assistant}")
+
+
+@app.command()
+def shell(
+    root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+) -> None:
+    paths = RuntimePaths(root=root)
+    run_shell(paths=paths, console=console)
 
 
 @app.command()

@@ -55,6 +55,34 @@ uv run agentmesh compare "分析 AgentMesh Runtime 如何减少多 Agent 协作�
 uv run agentmesh compare "生成一个多步骤评测方案" --llm
 ```
 
+## 交互式 CLI Shell
+
+项目也提供类似命令行工具的交互入口：
+
+```bash
+uv run agentmesh shell
+```
+
+进入 shell 后，直接输入一段任务文本会默认执行 `compare`，也就是在相同任务条件下同时跑 Text Mode 和 Protocol Mode，并输出消息数、token、wire bytes、状态传递、记忆命中率等指标。
+
+常用 `/` 命令：
+
+```text
+/help
+/compare [--llm] <task>
+/ask <message>
+/run text|protocol <task-file>
+/benchmark standard
+/benchmark long
+/memory --keyword|--tag|--semantic <query>
+/trace [limit]
+/report
+/config
+/exit
+```
+
+这个 shell 只是复用现有运行时能力，不改变公平对比边界：普通文本协作仍然是完整文本直传，结构化协议协作才会使用 AMP、StateRef、embedding、共享记忆和 Rust Core。
+
 ## Benchmark
 
 标准连续任务：
