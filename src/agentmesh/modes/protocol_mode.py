@@ -428,7 +428,7 @@ def run_protocol_mode(
         rust_core_enabled=rust_available(),
         sandbox_backend=sandbox_backend,
         memory_query_count=memory_query_count,
-        memory_hit_count=1 if memory_hits else 0,
+        memory_hit_count=len(memory_hits),
         latency_ms=latency_ms,
         stage_latency_ms=stage_latency_ms,
         answer_quality_score=deterministic_quality_score(summary_text),

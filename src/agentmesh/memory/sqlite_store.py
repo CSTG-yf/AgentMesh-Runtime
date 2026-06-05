@@ -2,6 +2,7 @@ import sqlite3
 from datetime import UTC, datetime
 from math import log1p
 from pathlib import Path
+import re
 
 import orjson
 
@@ -85,6 +86,9 @@ class SQLiteMemoryStore:
             append_jsonl(self.paths.protocol_memory, unit.model_dump(mode="json"))
 
     def keyword_search(self, keyword: str, limit: int = 5) -> list[MemoryUnit]:
+        query = _fts_query(keyword)
+        if not query:
+            return []
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -94,7 +98,7 @@ class SQLiteMemoryStore:
                 AND m.status = 'active'
                 LIMIT ?
                 """,
-                (keyword, limit),
+                (query, limit),
             ).fetchall()
         return [self._row_to_unit(row) for row in rows]
 
@@ -349,6 +353,11 @@ def _loads_embedding(raw: object) -> list[float] | None:
     if not isinstance(loaded, list):
         return None
     return [float(value) for value in loaded]
+
+
+def _fts_query(keyword: str) -> str:
+    tokens = re.findall(r"[\w]+", keyword, flags=re.UNICODE)
+    return " ".join(f'"{token}"' for token in tokens)
 
 
 def _rust_memory_rank_available() -> bool:

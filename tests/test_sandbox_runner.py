@@ -72,14 +72,29 @@ def test_rust_sandbox_subprocess_times_out(tmp_path: Path) -> None:
 
 
 @requires_rust_core
-def test_sandbox_runner_uses_warm_backend_by_default(tmp_path: Path) -> None:
+def test_sandbox_runner_uses_rust_backend_by_default(tmp_path: Path) -> None:
     runner = SandboxRunner(base_dir=tmp_path, limits=SandboxLimits(timeout_seconds=2))
+
+    result = runner.run_python("print('rust backend')")
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "rust backend"
+    assert result.backend == "rust"
+
+
+def test_sandbox_runner_can_opt_into_unsafe_warm_backend(tmp_path: Path) -> None:
+    runner = SandboxRunner(
+        base_dir=tmp_path,
+        limits=SandboxLimits(timeout_seconds=2),
+        use_warm_worker=True,
+        use_rust=False,
+    )
 
     result = runner.run_python("print('warm backend')")
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "warm backend"
-    assert result.backend == "warm_python"
+    assert result.backend == "warm_python_unsafe"
 
 
 @requires_rust_core
@@ -112,7 +127,11 @@ def test_sandbox_runner_maps_rust_timeout_to_sandbox_error(tmp_path: Path) -> No
 
 
 def test_sandbox_runner_maps_warm_worker_timeout_to_sandbox_error(tmp_path: Path) -> None:
-    runner = SandboxRunner(base_dir=tmp_path, limits=SandboxLimits(timeout_seconds=0.1))
+    runner = SandboxRunner(
+        base_dir=tmp_path,
+        limits=SandboxLimits(timeout_seconds=0.1),
+        use_warm_worker=True,
+    )
 
     with pytest.raises(SandboxTimeoutError):
         runner.run_python("import time\ntime.sleep(2)")

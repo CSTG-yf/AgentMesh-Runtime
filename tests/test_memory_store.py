@@ -35,6 +35,7 @@ def test_memory_store_puts_and_searches_by_keyword_tag_and_semantic(tmp_path: Pa
     memory_store.put(unit)
 
     assert memory_store.keyword_search("structured")[0].memory_id == unit.memory_id
+    assert memory_store.keyword_search("structured-protocol")[0].memory_id == unit.memory_id
     assert memory_store.tag_search("protocol")[0].memory_id == unit.memory_id
     semantic_result = memory_store.semantic_search("agent protocol state transfer")
     assert semantic_result[0].memory_id == unit.memory_id

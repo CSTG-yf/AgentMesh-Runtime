@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import IO
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agentmesh.core import rust_available, rust_core
 from agentmesh.errors import SandboxTimeoutError
@@ -22,6 +22,7 @@ class SandboxResult(BaseModel):
     exit_code: int
     latency_ms: int
     backend: str = "python"
+    backend_failures: list[str] = Field(default_factory=list)
 
 
 class SandboxRunner:
@@ -29,7 +30,7 @@ class SandboxRunner:
         self,
         base_dir: Path,
         limits: SandboxLimits | None = None,
-        use_warm_worker: bool = True,
+        use_warm_worker: bool = False,
         use_rust: bool = True,
     ) -> None:
         self.base_dir = base_dir
@@ -38,21 +39,25 @@ class SandboxRunner:
         self.use_rust = use_rust
 
     def run_python(self, code: str) -> SandboxResult:
+        backend_failures: list[str] = []
         if self.use_warm_worker:
             try:
-                return self._run_python_warm_worker(code)
+                return self._with_failures(
+                    self._run_python_warm_worker(code),
+                    backend_failures,
+                )
             except SandboxTimeoutError:
                 raise
-            except Exception:
-                pass
+            except Exception as exc:
+                backend_failures.append(f"warm_python_unsafe: {exc}")
         if self.use_rust and rust_available():
             try:
-                return self._run_python_rust(code)
+                return self._with_failures(self._run_python_rust(code), backend_failures)
             except TimeoutError as exc:
                 raise SandboxTimeoutError("Sandbox execution timed out") from exc
-            except Exception:
-                pass
-        return self._run_python_subprocess(code)
+            except Exception as exc:
+                backend_failures.append(f"rust: {exc}")
+        return self._with_failures(self._run_python_subprocess(code), backend_failures)
 
     def _run_python_warm_worker(self, code: str) -> SandboxResult:
         worker = _get_warm_worker(self.base_dir)
@@ -69,8 +74,17 @@ class SandboxRunner:
             stderr=stderr,
             exit_code=exit_code_raw if isinstance(exit_code_raw, int) else int(str(exit_code_raw)),
             latency_ms=latency_ms,
-            backend="warm_python",
+            backend="warm_python_unsafe",
         )
+
+    def _with_failures(
+        self,
+        result: SandboxResult,
+        backend_failures: list[str],
+    ) -> SandboxResult:
+        if not backend_failures:
+            return result
+        return result.model_copy(update={"backend_failures": list(backend_failures)})
 
     def _run_python_rust(self, code: str) -> SandboxResult:
         timeout_ms = max(0, int(self.limits.timeout_seconds * 1000))
