@@ -6,6 +6,14 @@ from typing import Any
 import orjson
 from pydantic import BaseModel, Field
 
+_ROUTE_ORDER = ["planner", "retriever", "executor", "summarizer"]
+_CAPABILITY_BY_AGENT = {
+    "planner": "plan.create",
+    "retriever": "memory.semantic_search",
+    "executor": "tool.run_python",
+    "summarizer": "summary.create",
+}
+
 
 class PlannerDecision(BaseModel):
     intent: str = "analysis"
@@ -26,6 +34,8 @@ class PlannerDecision(BaseModel):
             "测试",
             "验证",
             "计算",
+            "评测",
+            "跑一次",
             "benchmark",
             "bench",
             "codeact",
@@ -41,12 +51,19 @@ class PlannerDecision(BaseModel):
             "历史",
             "记忆",
             "证据",
+            "复用",
             "memory",
             "evidence",
             "retrieve",
             "search",
         ]
-        summary_only_words = ["总结已有", "只总结", "summarize existing", "summary only"]
+        summary_only_words = [
+            "总结已有",
+            "只总结",
+            "不需要检索",
+            "summarize existing",
+            "summary only",
+        ]
         need_tool = _contains_any(lowered, tool_words)
         need_retrieval = _contains_any(lowered, retrieval_words) or not _contains_any(
             lowered,
@@ -54,26 +71,14 @@ class PlannerDecision(BaseModel):
         )
         intent = "validation" if need_tool else "analysis"
         task_type = "benchmark" if "benchmark" in lowered or "评测" in lowered else "general"
-        capabilities = ["plan.create"]
-        route = ["planner"]
-        if need_retrieval:
-            capabilities.append("memory.semantic_search")
-            route.append("retriever")
-        if need_tool:
-            capabilities.append("tool.run_python")
-            route.append("executor")
-        capabilities.append("summary.create")
-        route.append("summarizer")
         return cls(
             intent=intent,
             task_type=task_type,
-            required_capabilities=capabilities,
-            execution_route=route,
             need_retrieval=need_retrieval,
             need_tool_execution=need_tool,
             need_summary=True,
             reason="matched tool/retrieval keywords",
-        )
+        ).normalized()
 
     @classmethod
     def from_llm_or_task(cls, task: str, llm_text: str | None) -> PlannerDecision:
@@ -82,12 +87,58 @@ class PlannerDecision(BaseModel):
             return fallback
         try:
             loaded: Any = orjson.loads(_json_object_text(llm_text))
-            decision = cls.model_validate(loaded)
+            decision = cls.model_validate(loaded).normalized()
         except Exception:
             return fallback
         if not decision.execution_route or not decision.required_capabilities:
             return fallback
         return decision
+
+    def normalized(self) -> PlannerDecision:
+        route = [agent for agent in self.execution_route if agent in _ROUTE_ORDER]
+        capabilities = [
+            capability
+            for capability in self.required_capabilities
+            if isinstance(capability, str) and capability
+        ]
+        need_retrieval = (
+            self.need_retrieval
+            or "retriever" in route
+            or "memory.semantic_search" in capabilities
+            or "evidence.refine" in capabilities
+        )
+        need_tool = (
+            self.need_tool_execution
+            or "executor" in route
+            or "tool.run_python" in capabilities
+            or "codeact.generate" in capabilities
+        )
+        need_summary = True if self.need_summary else "summarizer" in route
+        normalized_route = ["planner"]
+        if need_retrieval:
+            normalized_route.append("retriever")
+        if need_tool:
+            normalized_route.append("executor")
+        if need_summary:
+            normalized_route.append("summarizer")
+        normalized_capabilities = [
+            _CAPABILITY_BY_AGENT[agent]
+            for agent in normalized_route
+            if agent in _CAPABILITY_BY_AGENT
+        ]
+        intent = self.intent or ("validation" if need_tool else "analysis")
+        if need_tool and intent == "analysis":
+            intent = "validation"
+        return self.model_copy(
+            update={
+                "intent": intent,
+                "required_capabilities": list(dict.fromkeys(normalized_capabilities)),
+                "execution_route": normalized_route,
+                "need_retrieval": need_retrieval,
+                "need_tool_execution": need_tool,
+                "need_summary": need_summary,
+            }
+        )
 
 
 def _json_object_text(content: str) -> str:

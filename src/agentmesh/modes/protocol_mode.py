@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import orjson
+
 from agentmesh.core import rust_available
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
 from agentmesh.eval.quality import deterministic_quality_score
@@ -35,6 +37,43 @@ def run_protocol_mode(
     llm_client: LLMClient | None = None,
     load_configured_llm: bool = True,
 ) -> ModeRunResult:
+    return ProtocolRunSession(
+        task_path=task_path,
+        paths=paths,
+        llm_client=llm_client,
+        load_configured_llm=load_configured_llm,
+    ).run()
+
+
+class ProtocolRunSession:
+    def __init__(
+        self,
+        *,
+        task_path: Path,
+        paths: RuntimePaths,
+        llm_client: LLMClient | None,
+        load_configured_llm: bool,
+    ) -> None:
+        self.task_path = task_path
+        self.paths = paths
+        self.llm_client = llm_client
+        self.load_configured_llm = load_configured_llm
+
+    def run(self) -> ModeRunResult:
+        return _run_protocol_mode_impl(
+            task_path=self.task_path,
+            paths=self.paths,
+            llm_client=self.llm_client,
+            load_configured_llm=self.load_configured_llm,
+        )
+
+
+def _run_protocol_mode_impl(
+    task_path: Path,
+    paths: RuntimePaths,
+    llm_client: LLMClient | None = None,
+    load_configured_llm: bool = True,
+) -> ModeRunResult:
     paths.ensure()
     trace_id = f"trace-{uuid4().hex[:12]}"
     task = task_path.read_text(encoding="utf-8")
@@ -57,7 +96,13 @@ def run_protocol_mode(
     memory_store = HybridMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
     registry = default_registry()
     messages: list[AMPMessage] = []
-    scheduler = ProtocolScheduler(registry=registry, context=context, messages=messages)
+    protocol_map = _protocol_action_map()
+    scheduler = ProtocolScheduler(
+        registry=registry,
+        context=context,
+        messages=messages,
+        protocol_map=protocol_map,
+    )
     mark_stage("setup", stage_start)
 
     stage_start = time.perf_counter()
@@ -70,7 +115,7 @@ def run_protocol_mode(
             target_agent="runtime",
             msg_type=MsgType.CAPABILITY_QUERY,
             action="system.capability_query",
-            params={"required": ["plan.create", "memory.semantic_search", "tool.run_python"]},
+            params={"required": list(protocol_map.values())},
         )
     )
     messages.append(
@@ -81,10 +126,7 @@ def run_protocol_mode(
             msg_type=MsgType.PROTOCOL_MAP,
             action="protocol.map",
             result={
-                "planner": "plan.create",
-                "retriever": "memory.semantic_search",
-                "executor": "tool.run_python",
-                "summarizer": "summary.create",
+                **protocol_map,
                 "llm_configured": context.config.llm.configured,
                 "llm_client_available": context.llm_client is not None,
             },
@@ -132,11 +174,14 @@ def run_protocol_mode(
         parent_state_refs=[task_ref, query_ref],
         metadata={"llm_used": _non_empty_text(planner_result.result.get("llm_plan")) is not None},
     )
+    next_agent = "retriever" if decision.need_retrieval else "summarizer"
+    if decision.need_tool_execution and not decision.need_retrieval:
+        next_agent = "executor"
     messages.append(
         AMPMessage(
             trace_id=trace_id,
             source_agent="planner",
-            target_agent="retriever",
+            target_agent=next_agent,
             msg_type=MsgType.STATE_REF,
             action="state.put_summary",
             state_refs=[plan_ref],
@@ -428,7 +473,9 @@ def run_protocol_mode(
         rust_core_enabled=rust_available(),
         sandbox_backend=sandbox_backend,
         memory_query_count=memory_query_count,
-        memory_hit_count=len(memory_hits),
+        memory_hit_count=1 if memory_hits else 0,
+        memory_query_hit_count=1 if memory_hits else 0,
+        memory_reused_unit_count=len(memory_hits),
         latency_ms=latency_ms,
         stage_latency_ms=stage_latency_ms,
         answer_quality_score=deterministic_quality_score(summary_text),
@@ -457,9 +504,20 @@ def _derive_tags(text: str) -> list[str]:
     return tags or ["general"]
 
 
+def _protocol_action_map() -> dict[str, str]:
+    return {
+        "planner": "plan.create",
+        "retriever": "memory.semantic_search",
+        "executor": "tool.run_python",
+        "summarizer": "summary.create",
+        "planner_refine": "plan.refine",
+        "retriever_refine": "evidence.refine",
+    }
+
+
 def _planner_decision(message: AMPMessage, task: str) -> PlannerDecision:
     try:
-        return PlannerDecision.model_validate(message.result.get("decision"))
+        return PlannerDecision.model_validate(message.result.get("decision")).normalized()
     except Exception:
         return PlannerDecision.from_task(task)
 
@@ -481,11 +539,18 @@ def _tool_feedback(task: str, sandbox_payload: dict[str, Any]) -> dict[str, Any]
     stdout = str(sandbox_payload.get("stdout", "")).strip()
     stderr = str(sandbox_payload.get("stderr", "")).strip()
     exit_code = int(sandbox_payload.get("exit_code", 1))
-    evidence_gaps = []
+    parsed_stdout = _stdout_json(stdout)
+    evidence_gaps = _string_list(parsed_stdout.get("evidence_gaps"))
+    validated_claims = _string_list(parsed_stdout.get("validated_claims"))
+    failed_claims = _string_list(parsed_stdout.get("failed_claims"))
+    recommended_next_actions = _action_list(parsed_stdout.get("recommended_next_actions"))
     if _requires_feedback_refine(task):
-        evidence_gaps.append("verify benchmark baseline and communication metrics")
-    recommended_next_actions = []
-    if evidence_gaps:
+        _append_unique(evidence_gaps, "verify benchmark baseline and communication metrics")
+    if exit_code == 0:
+        _append_unique(validated_claims, "sandbox execution completed")
+    else:
+        _append_unique(failed_claims, "sandbox execution failed")
+    if evidence_gaps and not _has_capability(recommended_next_actions, "plan.refine"):
         recommended_next_actions.extend(
             [
                 {
@@ -503,8 +568,8 @@ def _tool_feedback(task: str, sandbox_payload: dict[str, Any]) -> dict[str, Any]
         "exit_code": exit_code,
         "stdout_summary": stdout[:500],
         "stderr_summary": stderr[:300],
-        "validated_claims": ["sandbox execution completed"] if exit_code == 0 else [],
-        "failed_claims": [] if exit_code == 0 else ["sandbox execution failed"],
+        "validated_claims": validated_claims,
+        "failed_claims": failed_claims,
         "evidence_gaps": evidence_gaps,
         "recommended_next_actions": recommended_next_actions,
     }
@@ -513,6 +578,50 @@ def _tool_feedback(task: str, sandbox_payload: dict[str, Any]) -> dict[str, Any]
 def _requires_feedback_refine(task: str) -> bool:
     lowered = task.lower()
     return any(word in lowered for word in ["benchmark", "验证", "评测", "通信开销"])
+
+
+def _stdout_json(stdout: str) -> dict[str, Any]:
+    if not stdout:
+        return {}
+    try:
+        loaded = orjson.loads(stdout)
+    except Exception:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
+
+def _action_list(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    actions: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        capability = item.get("target_capability")
+        if not isinstance(capability, str) or not capability:
+            continue
+        actions.append(
+            {
+                "target_capability": capability,
+                "reason": str(item.get("reason", "tool requested follow-up")),
+            }
+        )
+    return actions
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value not in items:
+        items.append(value)
+
+
+def _has_capability(actions: list[dict[str, str]], capability: str) -> bool:
+    return any(action.get("target_capability") == capability for action in actions)
 
 
 def _validity_score(code_result_payload: dict[str, Any] | None) -> float:

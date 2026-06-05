@@ -10,6 +10,8 @@ def generate_report(paths: RuntimePaths) -> Path:
     messages = read_jsonl(paths.protocol_messages)[:5]
     states = read_jsonl(paths.protocol_states)[:5]
     memory = read_jsonl(paths.protocol_memory)[:5]
+    trace = read_jsonl(paths.protocol_trace)
+    latest_metrics = _latest_metrics(trace)
     lines = [
         "# AgentMesh Runtime Experiment Report",
         "",
@@ -30,9 +32,17 @@ def generate_report(paths: RuntimePaths) -> Path:
         f"- ProtocolStatePayloadBytes: {summary.get('protocol_state_payload_bytes', '0')}",
         f"- LatencyReductionRate: {summary.get('latency_reduction_rate', '0')}",
         f"- MemoryHitRate: {summary.get('memory_hit_rate', '0')}",
+        f"- MemoryReusedUnitCount: {summary.get('memory_reused_unit_count', '0')}",
         f"- QualityPreservationRate: {summary.get('quality_preservation_rate', '0')}",
         f"- RustCoreEnabledRuns: {summary.get('rust_core_enabled_runs', '0')}",
         f"- RustSandboxBackendRuns: {summary.get('rust_sandbox_backend_runs', '0')}",
+        f"- FeedbackRoundCount: {summary.get('feedback_round_count', '0')}",
+        f"- PlannerRefineCount: {summary.get('planner_refine_count', '0')}",
+        f"- RetrieverRefineCount: {summary.get('retriever_refine_count', '0')}",
+        f"- ToolFeedbackCount: {summary.get('tool_feedback_count', '0')}",
+        f"- LatestDynamicRoute: {latest_metrics.get('dynamic_route', [])}",
+        f"- LatestSelectedAgents: {latest_metrics.get('selected_agents', [])}",
+        f"- LatestSkippedAgents: {latest_metrics.get('skipped_agents', [])}",
         "",
         "## Protocol Log Sample",
         "```json",
@@ -61,3 +71,10 @@ def _read_summary(path: Path) -> dict[str, str]:
     with path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
     return rows[0] if rows else {}
+
+
+def _latest_metrics(trace: list[dict[str, object]]) -> dict[str, object]:
+    if not trace:
+        return {}
+    metrics = trace[-1].get("metrics")
+    return metrics if isinstance(metrics, dict) else {}

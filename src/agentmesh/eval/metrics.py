@@ -21,6 +21,8 @@ class RunMetrics(BaseModel):
     sandbox_backend: str = ""
     memory_query_count: int = 0
     memory_hit_count: int = 0
+    memory_query_hit_count: int = 0
+    memory_reused_unit_count: int = 0
     latency_ms: int = 0
     stage_latency_ms: dict[str, int] = Field(default_factory=dict)
     answer_quality_score: float = 1.0
@@ -36,7 +38,11 @@ class RunMetrics(BaseModel):
     def memory_hit_rate(self) -> float:
         if self.memory_query_count == 0:
             return 0.0
-        return self.memory_hit_count / self.memory_query_count
+        query_hits = self.memory_query_hit_count or min(
+            self.memory_hit_count,
+            self.memory_query_count,
+        )
+        return min(1.0, query_hits / self.memory_query_count)
 
 
 class ModeRunResult(BaseModel):

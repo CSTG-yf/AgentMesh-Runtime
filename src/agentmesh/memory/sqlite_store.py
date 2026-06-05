@@ -1,8 +1,8 @@
+import re
 import sqlite3
 from datetime import UTC, datetime
 from math import log1p
 from pathlib import Path
-import re
 
 import orjson
 
@@ -119,11 +119,12 @@ class SQLiteMemoryStore:
         query_embedding = self.encoder.encode(query)
         units: list[MemoryUnit] = []
         vectors: list[list[float]] = []
-        for unit in self._all_units():
-            if unit.status != "active":
-                continue
-            if not unit.embedding_ref:
-                continue
+        candidate_units = self._semantic_candidates(
+            query=query,
+            query_tags=query_tags or [],
+            candidate_limit=candidate_limit,
+        )
+        for unit in candidate_units:
             vector = self._embedding_payload(unit)
             if vector is not None:
                 units.append(unit)
@@ -290,6 +291,104 @@ class SQLiteMemoryStore:
     def _all_units(self) -> list[MemoryUnit]:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM memory_units ORDER BY created_at").fetchall()
+        return [self._row_to_unit(row) for row in rows]
+
+    def _semantic_candidates(
+        self,
+        *,
+        query: str,
+        query_tags: list[str],
+        candidate_limit: int,
+    ) -> list[MemoryUnit]:
+        limit = max(1, candidate_limit)
+        channel_limit = max(1, limit)
+        max_candidates = max(limit, limit * 3)
+        candidates: dict[str, MemoryUnit] = {}
+        with self._connect() as conn:
+            for unit in self._fts_candidates(conn, query=query, limit=channel_limit):
+                candidates[unit.memory_id] = unit
+            if query_tags:
+                for unit in self._tag_candidates(
+                    conn,
+                    tags=query_tags,
+                    limit=max(channel_limit, len(query_tags) * channel_limit),
+                ):
+                    candidates.setdefault(unit.memory_id, unit)
+                    if len(candidates) >= max_candidates:
+                        break
+            if len(candidates) < max_candidates:
+                remaining = max_candidates - len(candidates)
+                for unit in self._recent_candidates(conn, limit=remaining):
+                    candidates.setdefault(unit.memory_id, unit)
+                    if len(candidates) >= max_candidates:
+                        break
+        if candidates:
+            return list(candidates.values())
+        return self._all_units()
+
+    def _fts_candidates(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        query: str,
+        limit: int,
+    ) -> list[MemoryUnit]:
+        fts_query = _fts_query(query)
+        if not fts_query:
+            return []
+        try:
+            rows = conn.execute(
+                """
+                SELECT m.* FROM memory_fts f
+                JOIN memory_units m ON m.memory_id = f.memory_id
+                WHERE memory_fts MATCH ?
+                AND m.status = 'active'
+                ORDER BY bm25(memory_fts)
+                LIMIT ?
+                """,
+                (fts_query, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [self._row_to_unit(row) for row in rows]
+
+    def _tag_candidates(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        tags: list[str],
+        limit: int,
+    ) -> list[MemoryUnit]:
+        if not tags:
+            return []
+        clauses = " OR ".join("tags_json LIKE ?" for _tag in tags)
+        rows = conn.execute(
+            f"""
+            SELECT * FROM memory_units
+            WHERE status = 'active'
+            AND ({clauses})
+            ORDER BY COALESCE(last_used_at, created_at) DESC, created_at DESC
+            LIMIT ?
+            """,
+            [*(f'%"{tag}"%' for tag in tags), max(1, limit)],
+        ).fetchall()
+        return [self._row_to_unit(row) for row in rows]
+
+    def _recent_candidates(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        limit: int,
+    ) -> list[MemoryUnit]:
+        rows = conn.execute(
+            """
+            SELECT * FROM memory_units
+            WHERE status = 'active'
+            ORDER BY COALESCE(last_used_at, created_at) DESC, created_at DESC
+            LIMIT ?
+            """,
+            (max(1, limit),),
+        ).fetchall()
         return [self._row_to_unit(row) for row in rows]
 
     def _row_to_unit(self, row: sqlite3.Row) -> MemoryUnit:

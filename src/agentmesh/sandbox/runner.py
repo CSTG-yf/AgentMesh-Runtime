@@ -39,11 +39,12 @@ class SandboxRunner:
         self.use_rust = use_rust
 
     def run_python(self, code: str) -> SandboxResult:
+        guarded_code = _guarded_python_code(code)
         backend_failures: list[str] = []
         if self.use_warm_worker:
             try:
                 return self._with_failures(
-                    self._run_python_warm_worker(code),
+                    self._run_python_warm_worker(guarded_code),
                     backend_failures,
                 )
             except SandboxTimeoutError:
@@ -52,12 +53,12 @@ class SandboxRunner:
                 backend_failures.append(f"warm_python_unsafe: {exc}")
         if self.use_rust and rust_available():
             try:
-                return self._with_failures(self._run_python_rust(code), backend_failures)
+                return self._with_failures(self._run_python_rust(guarded_code), backend_failures)
             except TimeoutError as exc:
                 raise SandboxTimeoutError("Sandbox execution timed out") from exc
             except Exception as exc:
                 backend_failures.append(f"rust: {exc}")
-        return self._with_failures(self._run_python_subprocess(code), backend_failures)
+        return self._with_failures(self._run_python_subprocess(guarded_code), backend_failures)
 
     def _run_python_warm_worker(self, code: str) -> SandboxResult:
         worker = _get_warm_worker(self.base_dir)
@@ -218,3 +219,73 @@ def _close_warm_workers() -> None:
 
 
 atexit.register(_close_warm_workers)
+
+
+def _guarded_python_code(code: str) -> str:
+    prelude = r"""
+import builtins as _agentmesh_builtins
+import os as _agentmesh_os
+import pathlib as _agentmesh_pathlib
+import socket as _agentmesh_socket
+import subprocess as _agentmesh_subprocess
+
+_AGENTMESH_SANDBOX_ROOT = _agentmesh_os.path.abspath(_agentmesh_os.getcwd())
+_AGENTMESH_ORIGINAL_OPEN = _agentmesh_builtins.open
+_AGENTMESH_ORIGINAL_OS_OPEN = _agentmesh_os.open
+_AGENTMESH_ORIGINAL_OS_CHDIR = _agentmesh_os.chdir
+_AGENTMESH_ORIGINAL_PATH_OPEN = _agentmesh_pathlib.Path.open
+
+
+def _agentmesh_check_path(path):
+    if isinstance(path, int):
+        raise PermissionError("sandbox blocks direct file descriptor access")
+    resolved = _agentmesh_os.path.abspath(_agentmesh_os.fspath(path))
+    if resolved == _AGENTMESH_SANDBOX_ROOT:
+        return path
+    if resolved.startswith(_AGENTMESH_SANDBOX_ROOT + _agentmesh_os.sep):
+        return path
+    raise PermissionError("sandbox blocks filesystem access outside run directory")
+
+
+def _agentmesh_guarded_open(file, *args, **kwargs):
+    _agentmesh_check_path(file)
+    return _AGENTMESH_ORIGINAL_OPEN(file, *args, **kwargs)
+
+
+def _agentmesh_guarded_path_open(self, *args, **kwargs):
+    _agentmesh_check_path(self)
+    return _AGENTMESH_ORIGINAL_PATH_OPEN(self, *args, **kwargs)
+
+
+def _agentmesh_guarded_os_open(path, flags, mode=0o777, *, dir_fd=None):
+    if dir_fd is not None:
+        raise PermissionError("sandbox blocks dir_fd filesystem access")
+    _agentmesh_check_path(path)
+    return _AGENTMESH_ORIGINAL_OS_OPEN(path, flags, mode)
+
+
+def _agentmesh_guarded_chdir(path):
+    _agentmesh_check_path(path)
+    return _AGENTMESH_ORIGINAL_OS_CHDIR(path)
+
+
+def _agentmesh_blocked(*args, **kwargs):
+    raise PermissionError("sandbox blocks network and subprocess access")
+
+
+_agentmesh_builtins.open = _agentmesh_guarded_open
+_agentmesh_os.open = _agentmesh_guarded_os_open
+_agentmesh_os.chdir = _agentmesh_guarded_chdir
+_agentmesh_pathlib.Path.open = _agentmesh_guarded_path_open
+_agentmesh_socket.socket = _agentmesh_blocked
+_agentmesh_socket.create_connection = _agentmesh_blocked
+_agentmesh_subprocess.Popen = _agentmesh_blocked
+_agentmesh_subprocess.run = _agentmesh_blocked
+_agentmesh_subprocess.call = _agentmesh_blocked
+_agentmesh_subprocess.check_call = _agentmesh_blocked
+_agentmesh_subprocess.check_output = _agentmesh_blocked
+_agentmesh_os.system = _agentmesh_blocked
+_agentmesh_os.popen = _agentmesh_blocked
+_agentmesh_os.environ.clear()
+"""
+    return f"{prelude}\n{code}"

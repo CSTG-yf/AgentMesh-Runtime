@@ -1,4 +1,7 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from agentmesh.memory.policy import MemoryWritePolicy
 from agentmesh.memory.schema import MemoryUnit
@@ -39,6 +42,123 @@ def test_memory_store_puts_and_searches_by_keyword_tag_and_semantic(tmp_path: Pa
     assert memory_store.tag_search("protocol")[0].memory_id == unit.memory_id
     semantic_result = memory_store.semantic_search("agent protocol state transfer")
     assert semantic_result[0].memory_id == unit.memory_id
+
+
+def test_memory_store_semantic_search_uses_inline_embedding_vector(tmp_path: Path) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    state_store = StateStore(paths)
+    encoder = HashEmbeddingEncoder()
+    memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
+    unit = MemoryUnit(
+        source_agent="summarizer",
+        task_topic="inline vector memory",
+        summary="Protocol feedback loop benchmark evidence.",
+        tags=["protocol", "benchmark"],
+        evidence_refs=[],
+        state_refs=[],
+        embedding_vector=encoder.encode("protocol feedback benchmark"),
+        confidence=0.9,
+        validity_score=0.9,
+        provenance_trace_id="trace-inline",
+    )
+
+    memory_store.put(unit)
+
+    results = memory_store.semantic_search("protocol feedback benchmark")
+    assert results[0].memory_id == unit.memory_id
+
+
+def test_memory_store_semantic_search_prefilters_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    state_store = StateStore(paths)
+    encoder = HashEmbeddingEncoder()
+    memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
+    for index in range(20):
+        memory_store.put(
+            MemoryUnit(
+                source_agent="summarizer",
+                task_topic=f"memory {index}",
+                summary=(
+                    "needle protocol evidence"
+                    if index == 0
+                    else f"unrelated filler memory {index}"
+                ),
+                tags=["target"] if index == 1 else ["general"],
+                evidence_refs=[],
+                state_refs=[],
+                embedding_vector=encoder.encode(f"memory {index}"),
+                confidence=0.8,
+                validity_score=0.8,
+                provenance_trace_id=f"trace-{index}",
+            )
+        )
+    calls = 0
+    original = memory_store._embedding_payload
+
+    def counted(unit: MemoryUnit) -> list[float] | None:
+        nonlocal calls
+        calls += 1
+        return original(unit)
+
+    monkeypatch.setattr(memory_store, "_embedding_payload", counted)
+
+    results = memory_store.semantic_search_with_scores(
+        "needle protocol evidence",
+        query_tags=["target"],
+        candidate_limit=5,
+    )
+
+    assert results
+    assert calls <= 15
+
+
+def test_memory_store_semantic_search_uses_tag_candidates_beyond_recent_window(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    state_store = StateStore(paths)
+    encoder = HashEmbeddingEncoder()
+    memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
+    old_target = MemoryUnit(
+        source_agent="summarizer",
+        created_at=datetime.now(UTC) - timedelta(days=30),
+        task_topic="old target",
+        summary="Old memory selected by tag.",
+        tags=["target"],
+        evidence_refs=[],
+        state_refs=[],
+        embedding_vector=encoder.encode("old target"),
+        confidence=0.8,
+        validity_score=0.8,
+        provenance_trace_id="trace-old",
+    )
+    memory_store.put(old_target)
+    for index in range(5):
+        memory_store.put(
+            MemoryUnit(
+                source_agent="summarizer",
+                task_topic=f"recent {index}",
+                summary=f"Recent unrelated memory {index}.",
+                tags=["general"],
+                evidence_refs=[],
+                state_refs=[],
+                embedding_vector=encoder.encode(f"recent {index}"),
+                confidence=0.8,
+                validity_score=0.8,
+                provenance_trace_id=f"trace-recent-{index}",
+            )
+        )
+
+    results = memory_store.semantic_search_with_scores(
+        "no lexical hit",
+        query_tags=["target"],
+        candidate_limit=1,
+    )
+
+    assert any(result.memory.memory_id == old_target.memory_id for result in results)
 
 
 def test_memory_policy_and_scorer_are_deterministic() -> None:

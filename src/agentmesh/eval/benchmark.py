@@ -28,9 +28,14 @@ class BenchmarkSummary(BaseModel):
     protocol_state_payload_bytes: int
     latency_reduction_rate: float
     memory_hit_rate: float
+    memory_reused_unit_count: int
     quality_preservation_rate: float
     rust_core_enabled_runs: int
     rust_sandbox_backend_runs: int
+    feedback_round_count: int
+    planner_refine_count: int
+    retriever_refine_count: int
+    tool_feedback_count: int
 
 
 def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
@@ -55,11 +60,16 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
     text_latency = 0
     protocol_latency = 0
     memory_queries = 0
-    memory_hits = 0
+    memory_query_hits = 0
+    memory_reused_units = 0
     text_quality = 0.0
     protocol_quality = 0.0
     rust_core_enabled_runs = 0
     rust_sandbox_backend_runs = 0
+    feedback_round_count = 0
+    planner_refine_count = 0
+    retriever_refine_count = 0
+    tool_feedback_count = 0
     logical_runs = 0
 
     for _round in range(repeat):
@@ -89,11 +99,19 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
             text_latency += text_result.metrics.latency_ms
             protocol_latency += protocol_result.metrics.latency_ms
             memory_queries += protocol_result.metrics.memory_query_count
-            memory_hits += protocol_result.metrics.memory_hit_count
+            memory_query_hits += protocol_result.metrics.memory_query_hit_count or min(
+                protocol_result.metrics.memory_hit_count,
+                protocol_result.metrics.memory_query_count,
+            )
+            memory_reused_units += protocol_result.metrics.memory_reused_unit_count
             text_quality += text_result.metrics.answer_quality_score
             protocol_quality += protocol_result.metrics.answer_quality_score
             rust_core_enabled_runs += int(protocol_result.metrics.rust_core_enabled)
             rust_sandbox_backend_runs += int(protocol_result.metrics.sandbox_backend == "rust")
+            feedback_round_count += protocol_result.metrics.feedback_round_count
+            planner_refine_count += protocol_result.metrics.planner_refine_count
+            retriever_refine_count += protocol_result.metrics.retriever_refine_count
+            tool_feedback_count += protocol_result.metrics.tool_feedback_count
             for result in [text_result, protocol_result]:
                 append_jsonl(
                     paths.benchmark_detail,
@@ -121,10 +139,15 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
         protocol_json_wire_bytes=protocol_json_wire_bytes,
         protocol_state_payload_bytes=protocol_state_payload_bytes,
         latency_reduction_rate=_rate(text_latency, protocol_latency),
-        memory_hit_rate=memory_hits / memory_queries if memory_queries else 0.0,
+        memory_hit_rate=memory_query_hits / memory_queries if memory_queries else 0.0,
+        memory_reused_unit_count=memory_reused_units,
         quality_preservation_rate=protocol_quality / text_quality if text_quality else 0.0,
         rust_core_enabled_runs=rust_core_enabled_runs,
         rust_sandbox_backend_runs=rust_sandbox_backend_runs,
+        feedback_round_count=feedback_round_count,
+        planner_refine_count=planner_refine_count,
+        retriever_refine_count=retriever_refine_count,
+        tool_feedback_count=tool_feedback_count,
     )
     _write_summary(paths.benchmark_summary, summary)
     return summary

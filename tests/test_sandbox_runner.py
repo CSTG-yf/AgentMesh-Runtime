@@ -43,6 +43,53 @@ def test_sandbox_runner_raises_timeout(tmp_path: Path) -> None:
         runner.run_python("import time\ntime.sleep(2)")
 
 
+def test_sandbox_runner_blocks_outside_files_network_env_and_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTMESH_SECRET_TEST", "secret")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private", encoding="utf-8")
+    runner = SandboxRunner(
+        base_dir=tmp_path / "sandbox",
+        limits=SandboxLimits(timeout_seconds=2),
+        use_warm_worker=False,
+        use_rust=False,
+    )
+
+    result = runner.run_python(
+        "\n".join(
+            [
+                "import os, socket, subprocess",
+                "print(os.environ.get('AGENTMESH_SECRET_TEST'))",
+                f"open({str(outside)!r}).read()",
+                "socket.socket()",
+                "subprocess.run(['python', '--version'])",
+            ]
+        )
+    )
+
+    assert result.exit_code != 0
+    assert "None" in result.stdout
+    assert "outside run directory" in result.stderr
+
+
+def test_sandbox_runner_blocks_low_level_outside_file_access(tmp_path: Path) -> None:
+    outside = tmp_path / "outside-low-level.txt"
+    outside.write_text("private", encoding="utf-8")
+    runner = SandboxRunner(
+        base_dir=tmp_path / "sandbox",
+        limits=SandboxLimits(timeout_seconds=2),
+        use_warm_worker=False,
+        use_rust=False,
+    )
+
+    result = runner.run_python(f"import os\nos.open({str(outside)!r}, os.O_RDONLY)")
+
+    assert result.exit_code != 0
+    assert "outside run directory" in result.stderr
+
+
 @requires_rust_core
 def test_rust_sandbox_subprocess_captures_result(tmp_path: Path) -> None:
     stdout, stderr, exit_code, latency_ms = rust_core().run_python_subprocess(

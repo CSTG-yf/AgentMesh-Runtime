@@ -1,3 +1,4 @@
+from agentmesh.errors import ProtocolError
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
 from agentmesh.runtime.registry import AgentRegistry, RuntimeContext
@@ -15,10 +16,12 @@ class ProtocolScheduler:
         registry: AgentRegistry,
         context: RuntimeContext,
         messages: list[AMPMessage],
+        protocol_map: dict[str, str] | None = None,
     ) -> None:
         self.registry = registry
         self.context = context
         self.messages = messages
+        self.protocol_map = dict(protocol_map or {})
         self.selected_agents: list[str] = []
 
     def invoke(
@@ -30,6 +33,7 @@ class ProtocolScheduler:
         state_refs: list[str] | None = None,
         target_agent: str | None = None,
     ) -> AMPMessage:
+        self._validate_action(action)
         agent = (
             self.registry.get(target_agent)
             if target_agent is not None
@@ -49,3 +53,10 @@ class ProtocolScheduler:
         self.messages.append(result)
         self.selected_agents.append(agent.name)
         return result
+
+    def _validate_action(self, action: str) -> None:
+        if not self.protocol_map:
+            return
+        if action in set(self.protocol_map.values()):
+            return
+        raise ProtocolError(f"Action {action} is not allowed by the protocol map")

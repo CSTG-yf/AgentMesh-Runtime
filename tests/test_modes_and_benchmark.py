@@ -116,9 +116,14 @@ tasks:
     assert summary.protocol_compact_message_bytes > 0
     assert summary.protocol_json_wire_bytes > 0
     assert summary.wire_bytes_reduction_rate != 0
+    assert 0.0 <= summary.memory_hit_rate <= 1.0
+    assert summary.memory_reused_unit_count >= 0
     assert paths.benchmark_summary.exists()
     assert paths.benchmark_detail.exists()
     assert report_path.exists()
-    assert "TokenSavingRate" in report_path.read_text(encoding="utf-8")
-    assert "WireBytesReductionRate" in report_path.read_text(encoding="utf-8")
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "TokenSavingRate" in report_text
+    assert "WireBytesReductionRate" in report_text
+    assert "FeedbackRoundCount" in report_text
+    assert "LatestDynamicRoute" in report_text
     assert len(read_jsonl(paths.benchmark_detail)) == 20
