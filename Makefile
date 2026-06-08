@@ -1,4 +1,4 @@
-.PHONY: sync test lint typecheck demo benchmark report all
+.PHONY: sync test lint typecheck demo benchmark report docker-build docker-up docker-shell docker-benchmark all
 
 sync:
 	uv sync --all-extras
@@ -20,5 +20,17 @@ benchmark:
 
 report:
 	uv run agentmesh report --run runs/latest
+
+docker-build:
+	docker compose build agentmesh
+
+docker-up:
+	docker compose up -d tei-embedding
+
+docker-shell:
+	docker compose run --rm agentmesh shell
+
+docker-benchmark:
+	docker compose run --rm agentmesh benchmark --suite examples/benchmarks/continuous_tasks.yaml
 
 all: sync lint typecheck test benchmark report

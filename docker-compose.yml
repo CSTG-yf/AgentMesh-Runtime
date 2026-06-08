@@ -1,0 +1,33 @@
+services:
+  agentmesh:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agentmesh-runtime:openeuler
+    env_file:
+      - .env
+    environment:
+      AGENTMESH_EMBEDDING_PROVIDER: tei
+      AGENTMESH_EMBEDDING_BASE_URL: http://tei-embedding
+      AGENTMESH_EMBEDDING_MODEL: BAAI/bge-small-zh-v1.5
+      AGENTMESH_EMBEDDING_DIMENSIONS: "512"
+      AGENTMESH_EMBEDDING_TIMEOUT_SECONDS: "15"
+    volumes:
+      - ./data:/app/data
+      - ./runs:/app/runs
+      - ./prompts:/app/prompts
+    depends_on:
+      - tei-embedding
+
+  tei-embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    ports:
+      - "8080:80"
+    volumes:
+      - hf-cache:/data
+    command:
+      - --model-id
+      - BAAI/bge-small-zh-v1.5
+
+volumes:
+  hf-cache:

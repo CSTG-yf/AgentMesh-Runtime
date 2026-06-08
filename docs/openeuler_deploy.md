@@ -1,5 +1,20 @@
 # openEuler 24.03-LTS-SP3 Deployment
 
+## Docker quick path
+
+The fastest reproducible deployment is Docker Compose:
+
+```bash
+./scripts/deploy_openeuler_docker.sh
+docker compose run --rm agentmesh benchmark --suite examples/benchmarks/continuous_tasks.yaml
+docker compose run --rm agentmesh report --run runs/latest
+```
+
+This builds the AgentMesh CLI in an openEuler-based image and starts TEI
+embedding as a sidecar service. See [docker_deploy.md](docker_deploy.md).
+
+## Bare-metal path
+
 Install system dependencies:
 
 ```bash

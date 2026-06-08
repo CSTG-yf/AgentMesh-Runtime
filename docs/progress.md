@@ -15,6 +15,7 @@
 | 10 | LLM-backed real-agent state handoff in Protocol Mode | Completed | `tests/test_real_agent_protocol_mode.py` |
 | 11 | Explicit plain-text vs structured AMP/Rust communication comparison metrics | Completed | `tests/test_modes_and_benchmark.py` |
 | 12 | CodeAct execution, Rust typed envelope codec, prompt compare CLI, long-context benchmark, readable Chinese README | Completed | `tests/test_compare_prompt.py`, `tests/test_typed_envelope.py`, `tests/test_real_agent_protocol_mode.py` |
+| 13 | Full README refresh: project overview, mechanisms, metric formulas, CLI usage, env policy, and file-by-file architecture notes | Completed | `git diff --check -- README.md` |
 
 Latest verified command:
 
