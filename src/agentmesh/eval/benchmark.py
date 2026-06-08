@@ -7,6 +7,7 @@ import yaml
 from pydantic import BaseModel
 
 from agentmesh.errors import BenchmarkConfigError
+from agentmesh.eval.metrics import TOKEN_ESTIMATOR
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.storage.jsonl import append_jsonl
@@ -16,6 +17,7 @@ from agentmesh.storage.paths import RuntimePaths
 class BenchmarkSummary(BaseModel):
     suite_name: str
     total_runs: int
+    token_estimator: str
     token_saving_rate: float
     wire_bytes_reduction_rate: float
     text_wire_bytes: int
@@ -152,6 +154,7 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
     summary = BenchmarkSummary(
         suite_name=str(suite.get("name", suite_path.stem)),
         total_runs=logical_runs,
+        token_estimator=TOKEN_ESTIMATOR,
         token_saving_rate=_rate(text_tokens, protocol_tokens),
         wire_bytes_reduction_rate=_rate(text_wire_bytes, protocol_wire_bytes),
         text_wire_bytes=text_wire_bytes,

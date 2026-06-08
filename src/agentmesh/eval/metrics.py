@@ -1,10 +1,13 @@
 from pydantic import BaseModel, Field
 
+TOKEN_ESTIMATOR = "mixed_cjk"
+
 
 class RunMetrics(BaseModel):
     message_count: int = 0
     text_chars: int = 0
     estimated_tokens: int = 0
+    token_estimator: str = TOKEN_ESTIMATOR
     communication_model: str = ""
     wire_bytes: int = 0
     text_wire_bytes: int = 0
@@ -60,4 +63,14 @@ class ModeRunResult(BaseModel):
 
 
 def estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4) if text else 0
+    if not text:
+        return 0
+    if TOKEN_ESTIMATOR == "char_div_4":
+        return max(1, len(text) // 4)
+    cjk = sum(1 for char in text if _is_cjk_or_punctuation(char))
+    ascii_other = len(text) - cjk
+    return max(1, int(cjk * 0.67 + ascii_other / 4))
+
+
+def _is_cjk_or_punctuation(char: str) -> bool:
+    return "\u4e00" <= char <= "\u9fff" or "\u3000" <= char <= "\u303f"

@@ -19,6 +19,7 @@ def generate_report(paths: RuntimePaths) -> Path:
         "",
         "Comparison target: plain text agent handoff vs structured AMP + StateRef handoff.",
         "",
+        f"- TokenEstimator: {summary.get('token_estimator', 'mixed_cjk')}",
         f"- TokenSavingRate: {summary.get('token_saving_rate', '0')}",
         f"- WireBytesReductionRate: {summary.get('wire_bytes_reduction_rate', '0')}",
         f"- TextWireBytes: {summary.get('text_wire_bytes', '0')}",

@@ -136,6 +136,7 @@ tasks:
     report_path = generate_report(paths=paths)
 
     assert summary.total_runs == 10
+    assert summary.token_estimator == "mixed_cjk"
     assert summary.text_wire_bytes > 0
     assert summary.protocol_wire_bytes > 0
     assert summary.protocol_session_dictionary_bytes > 0
@@ -154,6 +155,7 @@ tasks:
     assert paths.benchmark_detail.exists()
     assert report_path.exists()
     report_text = report_path.read_text(encoding="utf-8")
+    assert "TokenEstimator" in report_text
     assert "TokenSavingRate" in report_text
     assert "WireBytesReductionRate" in report_text
     assert "FeedbackRoundCount" in report_text
