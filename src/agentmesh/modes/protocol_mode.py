@@ -84,13 +84,17 @@ def _run_protocol_mode_impl(
         stage_latency_ms[name] = int((time.perf_counter() - stage_start) * 1000)
 
     stage_start = time.perf_counter()
-    state_store = StateStore(paths)
     context = RuntimeContext.from_paths(
         paths=paths,
         task_path=task_path,
         trace_id=trace_id,
         llm_client=llm_client,
         load_configured_llm=load_configured_llm,
+    )
+    state_store = StateStore(
+        paths,
+        payload_backend=context.config.state.payload_backend,
+        shm_threshold_bytes=context.config.state.shm_threshold_bytes,
     )
     encoder = create_embedding_encoder(context.config.embedding)
     memory_store = HybridMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
@@ -167,10 +171,11 @@ def _run_protocol_mode_impl(
         state_refs=[task_ref, query_ref],
     )
     decision = _planner_decision(planner_result, task)
+    plan_summary = _planner_summary(planner_result)
     plan_ref = state_store.put_summary(
         trace_id=trace_id,
         producer="planner",
-        summary=_planner_summary(planner_result),
+        summary=plan_summary,
         parent_state_refs=[task_ref, query_ref],
         metadata={"llm_used": _non_empty_text(planner_result.result.get("llm_plan")) is not None},
     )
@@ -195,6 +200,7 @@ def _run_protocol_mode_impl(
     evidence: list[dict[str, Any]] = []
     evidence_ref: str | None = None
     refined_plan_ref: str | None = None
+    refined_plan_summary = ""
     refined_evidence_ref: str | None = None
     code_result_ref: str | None = None
     code_result_payload: dict[str, Any] | None = None
@@ -325,6 +331,9 @@ def _run_protocol_mode_impl(
                 parent_state_refs=feedback_refs,
                 metadata={"refined": True},
             )
+            refined_plan_summary = str(
+                refined_plan_result.result.get("refined_plan", refined_plan_summary)
+            )
             feedback_round_count = 1
             planner_refine_count = 1
             mark_stage("planner_refine", stage_start)
@@ -375,6 +384,15 @@ def _run_protocol_mode_impl(
             "code_result": code_result_summary,
             "tool_feedback": tool_feedback or {},
             "dynamic_route": scheduler.selected_agents,
+            "state_context": {
+                "task": task,
+                "plan": plan_summary,
+                "refined_plan": refined_plan_summary,
+                "evidence": evidence,
+                "code_result": code_result_summary,
+                "tool_feedback": tool_feedback or {},
+                "dynamic_route": scheduler.selected_agents,
+            },
         },
         state_refs=summary_state_refs,
     )
@@ -453,6 +471,7 @@ def _run_protocol_mode_impl(
     handoff_bytes = _handoff_wire_bytes(messages)
     state_records = state_store.list_by_trace(trace_id)
     state_transfer_bytes = sum(record.size_bytes for record in state_records)
+    transport_stats = scheduler.transport_metrics()
     mark_stage("artifact_write", stage_start)
     latency_ms = int((time.perf_counter() - start) * 1000)
     metrics = RunMetrics(
@@ -472,6 +491,13 @@ def _run_protocol_mode_impl(
         state_transfer_bytes=state_transfer_bytes,
         rust_core_enabled=rust_available(),
         sandbox_backend=sandbox_backend,
+        transport_type=transport_stats.transport_type,
+        transport_send_count=transport_stats.send_count,
+        transport_bytes=transport_stats.total_bytes,
+        transport_avg_latency_ms=transport_stats.avg_latency_ms,
+        transport_p99_latency_ms=transport_stats.p99_latency_ms,
+        state_shm_transfer_count=state_store.shm_transfer_count(trace_id),
+        state_shm_transfer_bytes=state_store.shm_transfer_bytes(trace_id),
         memory_query_count=memory_query_count,
         memory_hit_count=1 if memory_hits else 0,
         memory_query_hit_count=1 if memory_hits else 0,
@@ -492,6 +518,7 @@ def _run_protocol_mode_impl(
         tool_feedback_count=tool_feedback_count,
     )
     append_jsonl(paths.protocol_trace, {"trace_id": trace_id, "metrics": metrics.model_dump()})
+    state_store.close()
     return ModeRunResult(mode="protocol", trace_id=trace_id, answer=summary_text, metrics=metrics)
 
 

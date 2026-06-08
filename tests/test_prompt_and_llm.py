@@ -2,7 +2,12 @@ from pathlib import Path
 from typing import Any
 
 from agentmesh.config import AgentMeshConfig
-from agentmesh.llm.client import ChatMessage, LLMClient, OpenAICompatibleClient
+from agentmesh.llm.client import (
+    ChatMessage,
+    LLMClient,
+    OpenAICompatibleClient,
+)
+from agentmesh.modes.text_mode import _text_mode_system_prompt, run_text_mode
 from agentmesh.prompts.store import PromptTemplateStore
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.storage.paths import RuntimePaths
@@ -24,6 +29,23 @@ class FakeLLMClient(LLMClient):
             {"agent_name": agent_name, "messages": messages, "variables": variables or {}}
         )
         return self.response
+
+
+class EchoAgentLLMClient(LLMClient):
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def complete(
+        self,
+        *,
+        agent_name: str,
+        messages: list[ChatMessage],
+        variables: dict[str, object] | None = None,
+    ) -> str:
+        self.calls.append(
+            {"agent_name": agent_name, "messages": messages, "variables": variables or {}}
+        )
+        return f"{agent_name} model response"
 
 
 def test_prompt_template_store_loads_custom_agent_prompt(tmp_path: Path) -> None:
@@ -129,3 +151,124 @@ def test_runtime_context_can_build_llm_client_and_prompt_store(tmp_path: Path) -
     assert context.config.llm.configured
     assert context.prompts.render("interactive", {"user_input": "hi"}) == "System: hi"
     assert context.llm_client is not None
+
+
+def test_text_mode_can_use_llm_with_full_text_handoff(tmp_path: Path) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Write quicksort in Python.", encoding="utf-8")
+    llm = EchoAgentLLMClient()
+
+    result = run_text_mode(
+        task_path=task,
+        paths=RuntimePaths(root=tmp_path),
+        llm_client=llm,
+        load_configured_llm=False,
+    )
+
+    assert result.answer == "summarizer model response"
+    assert [call["agent_name"] for call in llm.calls] == [
+        "planner",
+        "retriever",
+        "executor",
+        "summarizer",
+    ]
+    retriever_user = llm.calls[1]["messages"][1].content
+    summarizer_user = llm.calls[3]["messages"][1].content
+    assert "Write quicksort in Python." in retriever_user
+    assert "[planner] planner model response" in retriever_user
+    assert "[retriever] retriever model response" in summarizer_user
+    assert "[executor] executor model response" in summarizer_user
+    assert result.metrics.communication_model == "plain_text"
+    assert result.metrics.state_transfer_count == 0
+    assert result.metrics.transport_send_count == 0
+
+
+def test_text_mode_preserves_multiline_summarizer_answer(tmp_path: Path) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Write quicksort in Python.", encoding="utf-8")
+
+    class MultilineSummarizerLLM(EchoAgentLLMClient):
+        def complete(
+            self,
+            *,
+            agent_name: str,
+            messages: list[ChatMessage],
+            variables: dict[str, object] | None = None,
+        ) -> str:
+            self.calls.append(
+                {
+                    "agent_name": agent_name,
+                    "messages": messages,
+                    "variables": variables or {},
+                }
+            )
+            if agent_name == "summarizer":
+                return "line one\nline two\nline three"
+            return f"{agent_name} model response"
+
+    result = run_text_mode(
+        task_path=task,
+        paths=RuntimePaths(root=tmp_path),
+        llm_client=MultilineSummarizerLLM(),
+        load_configured_llm=False,
+    )
+
+    assert result.answer == "line one\nline two\nline three"
+
+
+def test_text_mode_executor_prompt_keeps_code_role_boundary(tmp_path: Path) -> None:
+    context = RuntimeContext.from_paths(
+        paths=RuntimePaths(root=tmp_path),
+        trace_id="trace-text-prompt",
+        load_configured_llm=False,
+    )
+
+    executor_prompt = _text_mode_system_prompt(
+        "executor",
+        context,
+        "Write quicksort in Python.",
+    )
+    planner_prompt = _text_mode_system_prompt(
+        "planner",
+        context,
+        "Write quicksort in Python.",
+    )
+
+    assert "ExecutorAgent-specific rule" in executor_prompt
+    assert "return only Python code" in executor_prompt
+    assert "ExecutorAgent-specific rule" not in planner_prompt
+
+
+def test_text_mode_uses_dedicated_llm_timeout_from_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured_timeouts: list[float] = []
+
+    def fake_transport(url, headers, payload, timeout_seconds):
+        del url, headers, payload
+        captured_timeouts.append(timeout_seconds)
+        return {"choices": [{"message": {"content": "model text"}}]}
+
+    monkeypatch.setattr(
+        "agentmesh.llm.client._default_transport",
+        fake_transport,
+    )
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "AGENTMESH_LLM_BASE_URL=https://llm.example/v1",
+                "AGENTMESH_LLM_API_KEY=sk-test",
+                "AGENTMESH_LLM_MODEL=qwen-test",
+                "AGENTMESH_LLM_TIMEOUT_SECONDS=15",
+                "AGENTMESH_TEXT_LLM_TIMEOUT_SECONDS=90",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    task = tmp_path / "task.txt"
+    task.write_text("Write quicksort in Python.", encoding="utf-8")
+
+    run_text_mode(task_path=task, paths=RuntimePaths(root=tmp_path))
+
+    assert captured_timeouts == [90.0, 90.0, 90.0, 90.0]

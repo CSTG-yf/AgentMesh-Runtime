@@ -1,6 +1,7 @@
 from agentmesh.errors import ProtocolError
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
+from agentmesh.protocol.transport import AgentTransport, InProcTransport, TransportMetrics
 from agentmesh.runtime.registry import AgentRegistry, RuntimeContext
 
 
@@ -17,11 +18,13 @@ class ProtocolScheduler:
         context: RuntimeContext,
         messages: list[AMPMessage],
         protocol_map: dict[str, str] | None = None,
+        transport: AgentTransport | None = None,
     ) -> None:
         self.registry = registry
         self.context = context
         self.messages = messages
         self.protocol_map = dict(protocol_map or {})
+        self.transport = transport or InProcTransport(registry=registry, context=context)
         self.selected_agents: list[str] = []
 
     def invoke(
@@ -49,10 +52,13 @@ class ProtocolScheduler:
             state_refs=state_refs or [],
         )
         self.messages.append(message)
-        result = agent.handle(message, self.context)
+        result = self.transport.send(message)
         self.messages.append(result)
         self.selected_agents.append(agent.name)
         return result
+
+    def transport_metrics(self) -> TransportMetrics:
+        return self.transport.metrics()
 
     def _validate_action(self, action: str) -> None:
         if not self.protocol_map:

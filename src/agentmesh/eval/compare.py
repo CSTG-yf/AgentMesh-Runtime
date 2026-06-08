@@ -31,7 +31,11 @@ def run_prompt_compare(
     task_path = task_dir / f"prompt-{uuid4().hex[:8]}.txt"
     task_path.write_text(prompt, encoding="utf-8")
 
-    text_result = run_text_mode(task_path=task_path, paths=paths)
+    text_result = run_text_mode(
+        task_path=task_path,
+        paths=paths,
+        load_configured_llm=use_llm,
+    )
     protocol_result = run_protocol_mode(
         task_path=task_path,
         paths=paths,

@@ -43,13 +43,20 @@ def run(
     mode: Annotated[str, typer.Option(help="text or protocol")],
     task: Annotated[Path, typer.Option(help="Task file path")],
     root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+    llm: Annotated[
+        bool,
+        typer.Option(
+            "--llm/--no-llm",
+            help="Allow agents in the selected mode to call the configured LLM.",
+        ),
+    ] = False,
 ) -> None:
     paths = RuntimePaths(root=root)
     try:
         if mode == "protocol":
-            result = run_protocol_mode(task, paths)
+            result = run_protocol_mode(task, paths, load_configured_llm=llm)
         else:
-            result = run_text_mode(task, paths)
+            result = run_text_mode(task, paths, load_configured_llm=llm)
     except Exception as exc:
         console.print(f"[red]agentmesh run failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -78,7 +85,7 @@ def compare(
         bool,
         typer.Option(
             "--llm/--no-llm",
-            help="Allow Protocol Mode agents to call the configured LLM.",
+            help="Allow both Text Mode and Protocol Mode agents to call the configured LLM.",
         ),
     ] = False,
 ) -> None:

@@ -1,4 +1,5 @@
 import sqlite3
+from multiprocessing import shared_memory
 from pathlib import Path
 from typing import Any
 
@@ -12,10 +13,19 @@ from agentmesh.storage.paths import RuntimePaths
 
 
 class StateStore:
-    def __init__(self, paths: RuntimePaths) -> None:
+    def __init__(
+        self,
+        paths: RuntimePaths,
+        *,
+        payload_backend: str = "file",
+        shm_threshold_bytes: int = 4096,
+    ) -> None:
         self.paths = paths
+        self.payload_backend = payload_backend
+        self.shm_threshold_bytes = max(1, shm_threshold_bytes)
         self.paths.ensure()
         self._records: dict[str, StateRecord] = {}
+        self._owned_shm: dict[str, shared_memory.SharedMemory] = {}
         self._init_index()
         self._load_records()
 
@@ -130,6 +140,8 @@ class StateStore:
         record = self._records.get(parsed.state_id)
         if record is None:
             raise StateNotFoundError(f"State not found: {ref}")
+        if record.payload_ref.startswith("shm://"):
+            return record, orjson.loads(self._read_shm_payload(record.payload_ref))
         payload_path = Path(record.payload_ref)
         if record.state_type == StateType.BLOB:
             return record, payload_path.read_bytes()
@@ -166,6 +178,7 @@ class StateStore:
         metadata: dict[str, Any],
     ) -> str:
         encoded = orjson.dumps(payload)
+        metadata = dict(metadata)
         record = StateRecord(
             trace_id=trace_id,
             state_type=state_type,
@@ -175,10 +188,74 @@ class StateStore:
             size_bytes=len(encoded),
             metadata=metadata,
         )
-        payload_path = self.paths.state_payload_dir / f"{record.state_id}.json"
-        payload_path.write_bytes(encoded)
-        record.payload_ref = str(payload_path)
+        if self._should_use_shm(encoded):
+            record.payload_ref = self._write_shm_payload(record.state_id, encoded)
+            record.metadata["payload_backend"] = "shm"
+        else:
+            payload_path = self.paths.state_payload_dir / f"{record.state_id}.json"
+            payload_path.write_bytes(encoded)
+            record.payload_ref = str(payload_path)
         return self._record(record)
+
+    def shm_transfer_count(self, trace_id: str | None = None) -> int:
+        return sum(
+            1
+            for record in self._matching_records(trace_id)
+            if _is_shm_ref(record.payload_ref)
+        )
+
+    def shm_transfer_bytes(self, trace_id: str | None = None) -> int:
+        return sum(
+            record.size_bytes
+            for record in self._matching_records(trace_id)
+            if _is_shm_ref(record.payload_ref)
+        )
+
+    def close(self) -> None:
+        for shm in list(self._owned_shm.values()):
+            try:
+                shm.close()
+            finally:
+                try:
+                    shm.unlink()
+                except FileNotFoundError:
+                    pass
+        self._owned_shm.clear()
+
+    def _matching_records(self, trace_id: str | None) -> list[StateRecord]:
+        if trace_id is None:
+            return list(self._records.values())
+        return self.list_by_trace(trace_id)
+
+    def _should_use_shm(self, encoded: bytes) -> bool:
+        return self.payload_backend == "shm" and len(encoded) >= self.shm_threshold_bytes
+
+    def _write_shm_payload(self, state_id: str, encoded: bytes) -> str:
+        shm = shared_memory.SharedMemory(
+            name=f"agentmesh_{state_id.replace('-', '_')}",
+            create=True,
+            size=len(encoded),
+        )
+        if shm.buf is None:
+            raise StateNotFoundError("Shared memory buffer is unavailable")
+        shm.buf[: len(encoded)] = encoded
+        self._owned_shm[shm.name] = shm
+        return f"shm://{shm.name}/{len(encoded)}"
+
+    def _read_shm_payload(self, payload_ref: str) -> bytes:
+        name, size = _parse_shm_ref(payload_ref)
+        shm = self._owned_shm.get(name)
+        close_after = False
+        if shm is None:
+            shm = shared_memory.SharedMemory(name=name, create=False)
+            close_after = True
+        try:
+            if shm.buf is None:
+                raise StateNotFoundError("Shared memory buffer is unavailable")
+            return bytes(shm.buf[:size])
+        finally:
+            if close_after:
+                shm.close()
 
     def _record(self, record: StateRecord) -> str:
         self._records[record.state_id] = record
@@ -259,3 +336,17 @@ class StateStore:
                     record.model_dump_json(),
                 ),
             )
+
+
+def _is_shm_ref(payload_ref: str) -> bool:
+    return payload_ref.startswith("shm://")
+
+
+def _parse_shm_ref(payload_ref: str) -> tuple[str, int]:
+    if not payload_ref.startswith("shm://"):
+        raise StateNotFoundError(f"State payload is not shared memory: {payload_ref}")
+    raw = payload_ref.removeprefix("shm://")
+    name, _, size_raw = raw.partition("/")
+    if not name or not size_raw:
+        raise StateNotFoundError(f"Invalid shared memory payload ref: {payload_ref}")
+    return name, int(size_raw)

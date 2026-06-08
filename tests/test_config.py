@@ -14,6 +14,7 @@ def test_config_loads_llm_settings_from_dotenv_without_exporting_secret(tmp_path
                 "AGENTMESH_LLM_API_KEY=sk-test-secret",
                 "AGENTMESH_LLM_MODEL=agentmesh-test-model",
                 "AGENTMESH_LLM_TIMEOUT_SECONDS=15",
+                "AGENTMESH_TEXT_LLM_TIMEOUT_SECONDS=90",
             ]
         ),
         encoding="utf-8",
@@ -25,6 +26,7 @@ def test_config_loads_llm_settings_from_dotenv_without_exporting_secret(tmp_path
     assert config.llm.api_key.get_secret_value() == "sk-test-secret"
     assert config.llm.model == "agentmesh-test-model"
     assert config.llm.timeout_seconds == 15.0
+    assert config.llm.text_timeout_seconds == 90.0
     assert config.model_dump(mode="json")["llm"]["api_key"] == "**********"
 
 
@@ -71,6 +73,25 @@ def test_config_loads_memory_maintenance_settings(tmp_path: Path) -> None:
     assert not config.memory.maintenance_enabled
     assert config.memory.maintenance_interval_seconds == 12.0
     assert config.memory.maintenance_max_items == 7
+
+
+def test_config_loads_state_payload_backend_settings(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "AGENTMESH_STATE_PAYLOAD_BACKEND=shm",
+                "AGENTMESH_STATE_SHM_THRESHOLD_BYTES=128",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = AgentMeshConfig.from_env_file(env_file)
+
+    assert config.state.payload_backend == "shm"
+    assert config.state.shm_threshold_bytes == 128
+    assert config.state.shm_enabled
 
 
 def test_protocol_mode_receives_optional_llm_config_from_env(tmp_path: Path) -> None:

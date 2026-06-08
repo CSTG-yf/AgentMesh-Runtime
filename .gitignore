@@ -16,6 +16,7 @@ target/
 
 # Runtime artifacts
 runs/
+data/
 
 # Local secrets
 .env

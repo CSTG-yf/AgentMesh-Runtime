@@ -19,6 +19,13 @@ class RunMetrics(BaseModel):
     state_transfer_bytes: int = 0
     rust_core_enabled: bool = False
     sandbox_backend: str = ""
+    transport_type: str = ""
+    transport_send_count: int = 0
+    transport_bytes: int = 0
+    transport_avg_latency_ms: float = 0.0
+    transport_p99_latency_ms: float = 0.0
+    state_shm_transfer_count: int = 0
+    state_shm_transfer_bytes: int = 0
     memory_query_count: int = 0
     memory_hit_count: int = 0
     memory_query_hit_count: int = 0

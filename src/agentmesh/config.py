@@ -1,5 +1,6 @@
 from os import environ
 from pathlib import Path
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer
 
@@ -9,6 +10,7 @@ class LLMConfig(BaseModel):
     api_key: SecretStr | None = None
     model: str | None = None
     timeout_seconds: float = 30.0
+    text_timeout_seconds: float | None = None
 
     @field_serializer("api_key", when_used="json")
     def serialize_api_key(self, value: SecretStr | None) -> str | None:
@@ -39,10 +41,20 @@ class MemoryConfig(BaseModel):
     maintenance_max_items: int = 20
 
 
+class StateConfig(BaseModel):
+    payload_backend: Literal["file", "shm"] = "file"
+    shm_threshold_bytes: int = 4096
+
+    @property
+    def shm_enabled(self) -> bool:
+        return self.payload_backend == "shm"
+
+
 class AgentMeshConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    state: StateConfig = Field(default_factory=StateConfig)
     prompt_dir: Path | None = None
 
     @classmethod
@@ -59,6 +71,7 @@ class AgentMeshConfig(BaseModel):
     def from_mapping(cls, values: dict[str, str]) -> "AgentMeshConfig":
         api_key = _first_present(values, "AGENTMESH_LLM_API_KEY", "OPENAI_API_KEY")
         timeout_raw = _first_present(values, "AGENTMESH_LLM_TIMEOUT_SECONDS")
+        text_timeout_raw = _first_present(values, "AGENTMESH_TEXT_LLM_TIMEOUT_SECONDS")
         embedding_provider = _first_present(values, "AGENTMESH_EMBEDDING_PROVIDER") or "hash"
         embedding_dimensions_raw = _first_present(values, "AGENTMESH_EMBEDDING_DIMENSIONS")
         embedding_timeout_raw = _first_present(values, "AGENTMESH_EMBEDDING_TIMEOUT_SECONDS")
@@ -74,10 +87,16 @@ class AgentMeshConfig(BaseModel):
             values,
             "AGENTMESH_MEMORY_MAX_BACKGROUND_ITEMS",
         )
+        state_payload_backend = cast(
+            Literal["file", "shm"],
+            _first_present(values, "AGENTMESH_STATE_PAYLOAD_BACKEND") or "file",
+        )
+        state_shm_threshold_raw = _first_present(values, "AGENTMESH_STATE_SHM_THRESHOLD_BYTES")
         prompt_dir_raw = _first_present(values, "AGENTMESH_PROMPT_DIR")
         timeout = 30.0
         if timeout_raw:
             timeout = float(timeout_raw)
+        text_timeout = float(text_timeout_raw) if text_timeout_raw else None
         embedding_dimensions = 512
         if embedding_dimensions_raw:
             embedding_dimensions = int(embedding_dimensions_raw)
@@ -90,12 +109,16 @@ class AgentMeshConfig(BaseModel):
         maintenance_max_items = 20
         if maintenance_max_items_raw:
             maintenance_max_items = int(maintenance_max_items_raw)
+        state_shm_threshold = 4096
+        if state_shm_threshold_raw:
+            state_shm_threshold = int(state_shm_threshold_raw)
         return cls(
             llm=LLMConfig(
                 base_url=_first_present(values, "AGENTMESH_LLM_BASE_URL", "OPENAI_BASE_URL"),
                 api_key=SecretStr(api_key) if api_key else None,
                 model=_first_present(values, "AGENTMESH_LLM_MODEL", "OPENAI_MODEL"),
                 timeout_seconds=timeout,
+                text_timeout_seconds=text_timeout,
             ),
             embedding=EmbeddingConfig(
                 provider=embedding_provider,
@@ -109,6 +132,10 @@ class AgentMeshConfig(BaseModel):
                 maintenance_enabled=_parse_bool(maintenance_enabled_raw, default=True),
                 maintenance_interval_seconds=maintenance_interval,
                 maintenance_max_items=maintenance_max_items,
+            ),
+            state=StateConfig(
+                payload_backend=state_payload_backend,
+                shm_threshold_bytes=state_shm_threshold,
             ),
             prompt_dir=Path(prompt_dir_raw) if prompt_dir_raw else None,
         )

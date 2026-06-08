@@ -32,6 +32,12 @@ class BenchmarkSummary(BaseModel):
     quality_preservation_rate: float
     rust_core_enabled_runs: int
     rust_sandbox_backend_runs: int
+    transport_send_count: int
+    transport_bytes: int
+    transport_avg_latency_ms: float
+    transport_p99_latency_ms: float
+    state_shm_transfer_count: int
+    state_shm_transfer_bytes: int
     feedback_round_count: int
     planner_refine_count: int
     retriever_refine_count: int
@@ -66,6 +72,12 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
     protocol_quality = 0.0
     rust_core_enabled_runs = 0
     rust_sandbox_backend_runs = 0
+    transport_send_count = 0
+    transport_bytes = 0
+    transport_latency_weighted_total = 0.0
+    transport_p99_latency_ms = 0.0
+    state_shm_transfer_count = 0
+    state_shm_transfer_bytes = 0
     feedback_round_count = 0
     planner_refine_count = 0
     retriever_refine_count = 0
@@ -108,6 +120,18 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
             protocol_quality += protocol_result.metrics.answer_quality_score
             rust_core_enabled_runs += int(protocol_result.metrics.rust_core_enabled)
             rust_sandbox_backend_runs += int(protocol_result.metrics.sandbox_backend == "rust")
+            transport_send_count += protocol_result.metrics.transport_send_count
+            transport_bytes += protocol_result.metrics.transport_bytes
+            transport_latency_weighted_total += (
+                protocol_result.metrics.transport_avg_latency_ms
+                * protocol_result.metrics.transport_send_count
+            )
+            transport_p99_latency_ms = max(
+                transport_p99_latency_ms,
+                protocol_result.metrics.transport_p99_latency_ms,
+            )
+            state_shm_transfer_count += protocol_result.metrics.state_shm_transfer_count
+            state_shm_transfer_bytes += protocol_result.metrics.state_shm_transfer_bytes
             feedback_round_count += protocol_result.metrics.feedback_round_count
             planner_refine_count += protocol_result.metrics.planner_refine_count
             retriever_refine_count += protocol_result.metrics.retriever_refine_count
@@ -144,6 +168,16 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
         quality_preservation_rate=protocol_quality / text_quality if text_quality else 0.0,
         rust_core_enabled_runs=rust_core_enabled_runs,
         rust_sandbox_backend_runs=rust_sandbox_backend_runs,
+        transport_send_count=transport_send_count,
+        transport_bytes=transport_bytes,
+        transport_avg_latency_ms=(
+            transport_latency_weighted_total / transport_send_count
+            if transport_send_count
+            else 0.0
+        ),
+        transport_p99_latency_ms=transport_p99_latency_ms,
+        state_shm_transfer_count=state_shm_transfer_count,
+        state_shm_transfer_bytes=state_shm_transfer_bytes,
         feedback_round_count=feedback_round_count,
         planner_refine_count=planner_refine_count,
         retriever_refine_count=retriever_refine_count,

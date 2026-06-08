@@ -32,6 +32,9 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert text_result.metrics.state_transfer_bytes == 0
     assert text_result.metrics.rust_core_enabled is False
     assert text_result.metrics.sandbox_backend == ""
+    assert text_result.metrics.transport_type == ""
+    assert text_result.metrics.transport_send_count == 0
+    assert text_result.metrics.state_shm_transfer_count == 0
     assert text_result.metrics.memory_query_count == 0
     assert text_result.metrics.memory_hit_count == 0
     text_messages = read_jsonl(paths.text_messages)
@@ -58,6 +61,11 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
         < protocol_result.metrics.compact_structured_message_bytes
     )
     assert protocol_result.metrics.state_transfer_count >= 4
+    assert protocol_result.metrics.transport_type == "inproc"
+    assert protocol_result.metrics.transport_send_count == 3
+    assert protocol_result.metrics.transport_bytes > 0
+    assert protocol_result.metrics.transport_avg_latency_ms >= 0
+    assert protocol_result.metrics.state_shm_transfer_count == 0
     assert set(protocol_result.metrics.stage_latency_ms) == {
         "setup",
         "state_task_embedding",
@@ -72,6 +80,26 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert "executor" in protocol_result.metrics.skipped_agents
     assert paths.text_messages.exists()
     assert paths.protocol_states.exists()
+
+
+def test_protocol_mode_can_use_shared_memory_state_payloads(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "AGENTMESH_STATE_PAYLOAD_BACKEND=shm",
+                "AGENTMESH_STATE_SHM_THRESHOLD_BYTES=8",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    task = tmp_path / "task.txt"
+    task.write_text("Analyze shared memory state transfer in protocol mode.", encoding="utf-8")
+    paths = RuntimePaths(root=tmp_path)
+
+    result = run_protocol_mode(task_path=task, paths=paths)
+
+    assert result.metrics.state_shm_transfer_count > 0
+    assert result.metrics.state_shm_transfer_bytes > 0
 
 
 def test_benchmark_and_report_generate_expected_outputs(tmp_path: Path) -> None:
@@ -115,6 +143,10 @@ tasks:
     assert summary.protocol_typed_payload_bytes > 0
     assert summary.protocol_compact_message_bytes > 0
     assert summary.protocol_json_wire_bytes > 0
+    assert summary.transport_send_count > 0
+    assert summary.transport_bytes > 0
+    assert summary.transport_avg_latency_ms >= 0
+    assert summary.state_shm_transfer_count == 0
     assert summary.wire_bytes_reduction_rate != 0
     assert 0.0 <= summary.memory_hit_rate <= 1.0
     assert summary.memory_reused_unit_count >= 0
@@ -125,5 +157,7 @@ tasks:
     assert "TokenSavingRate" in report_text
     assert "WireBytesReductionRate" in report_text
     assert "FeedbackRoundCount" in report_text
+    assert "TransportSendCount" in report_text
+    assert "StateShmTransferCount" in report_text
     assert "LatestDynamicRoute" in report_text
     assert len(read_jsonl(paths.benchmark_detail)) == 20
