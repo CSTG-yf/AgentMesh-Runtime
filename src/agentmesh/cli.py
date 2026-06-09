@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Annotated
 
@@ -60,7 +61,7 @@ def run(
     except Exception as exc:
         console.print(f"[red]agentmesh run failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
-    console.print(result.model_dump())
+    _print_json(result.model_dump(mode="json"))
 
 
 @app.command()
@@ -74,7 +75,7 @@ def benchmark(
     except Exception as exc:
         console.print(f"[red]agentmesh benchmark failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
-    console.print(summary.model_dump())
+    _print_json(summary.model_dump(mode="json"))
 
 
 @app.command()
@@ -95,7 +96,7 @@ def compare(
     except Exception as exc:
         console.print(f"[red]agentmesh compare failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
-    console.print(summary.model_dump())
+    _print_json(summary.model_dump(mode="json"))
 
 
 @app.command()
@@ -165,7 +166,7 @@ def memory_search(
         console.print("[red]Provide --keyword, --tag, or --semantic.[/red]")
         raise typer.Exit(code=1)
     for item in results:
-        console.print(item.model_dump())
+        _print_json(item.model_dump(mode="json"))
 
 
 @memory_app.command("stats")
@@ -186,7 +187,7 @@ def memory_stats(
     )
     run_units = run_store.all_units()
     global_units = global_store.all_units()
-    console.print(
+    _print_json(
         {
             "run_memory_db": str(paths.memory_db),
             "global_memory_db": str(paths.global_memory_db),
@@ -209,7 +210,7 @@ def memory_archive(
         state_store=StateStore(paths),
         encoder=create_embedding_encoder(context.config.embedding),
     )
-    console.print(worker.run_once())
+    _print_json(worker.run_once())
 
 
 @trace_app.command("show")
@@ -217,6 +218,15 @@ def trace_show(
     root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
 ) -> None:
     paths = RuntimePaths(root=root)
-    for path in [paths.text_trace, paths.protocol_trace]:
+    for path in [
+        paths.text_trace,
+        paths.text_agent_io,
+        paths.protocol_trace,
+        paths.protocol_agent_io,
+    ]:
         for item in read_jsonl(path):
-            console.print(item)
+            _print_json(item)
+
+
+def _print_json(value: object) -> None:
+    console.print(json.dumps(value, ensure_ascii=True, indent=2), markup=False)

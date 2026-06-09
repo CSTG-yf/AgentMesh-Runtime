@@ -215,7 +215,17 @@ def _run_protocol_mode_impl(
 
     if decision.need_retrieval:
         stage_start = time.perf_counter()
-        memory_hits = memory_store.semantic_search(task, query_tags=query_tags)
+        memory_results = [
+            result
+            for result in memory_store.semantic_search_with_scores(task, query_tags=query_tags)
+            if _should_reuse_memory_result(
+                score=float(result.score),
+                semantic_similarity=float(result.semantic_similarity),
+                tag_overlap_score=float(result.tag_overlap_score),
+                query_tags=query_tags,
+            )
+        ]
+        memory_hits = [result.memory for result in memory_results]
         for hit in memory_hits:
             memory_store.increment_reuse(hit.memory_id)
         memory_query_count = 1
@@ -230,8 +240,16 @@ def _run_protocol_mode_impl(
         )
         evidence = list(retriever_result.result["evidence"])
         evidence.extend(
-            {"title": unit.task_topic, "snippet": unit.summary, "memory_id": unit.memory_id}
-            for unit in memory_hits
+            {
+                "title": result.memory.task_topic,
+                "snippet": result.memory.summary,
+                "memory_id": result.memory.memory_id,
+                "memory_score": round(float(result.score), 4),
+                "semantic_similarity": round(float(result.semantic_similarity), 4),
+                "tag_overlap_score": round(float(result.tag_overlap_score), 4),
+                "reason": result.reason,
+            }
+            for result in memory_results
         )
         evidence_ref = state_store.put_evidence(
             trace_id=trace_id,
@@ -398,8 +416,11 @@ def _run_protocol_mode_impl(
     )
     model_summary = _non_empty_text(summarizer_result.result.get("llm_summary"))
     summary_text = model_summary or (
-        "Protocol Mode answer: structured collaboration completed with "
-        f"{len(evidence)} evidence item(s) and route {' -> '.join(scheduler.selected_agents)}."
+        _fallback_summary(
+            evidence_count=len(evidence),
+            route=scheduler.selected_agents,
+            code_result_summary=code_result_summary,
+        )
     )
     summary_ref = state_store.put_summary(
         trace_id=trace_id,
@@ -524,11 +545,34 @@ def _run_protocol_mode_impl(
 
 def _derive_tags(text: str) -> list[str]:
     lowered = text.lower()
+    tag_terms = {
+        "protocol": ["protocol", "协议"],
+        "state": ["state", "状态"],
+        "memory": ["memory", "记忆"],
+        "benchmark": ["benchmark", "评测", "基准"],
+        "agent": ["agent"],
+        "runtime": ["runtime"],
+        "code": ["代码", "脚本", "排序", "quicksort", "quick sort", "sort"],
+    }
     tags: list[str] = []
-    for candidate in ["protocol", "state", "memory", "benchmark", "agent", "runtime"]:
-        if candidate in lowered:
+    for candidate, terms in tag_terms.items():
+        if any(term in lowered for term in terms):
             tags.append(candidate)
     return tags or ["general"]
+
+
+def _should_reuse_memory_result(
+    *,
+    score: float,
+    semantic_similarity: float,
+    tag_overlap_score: float,
+    query_tags: list[str],
+) -> bool:
+    if query_tags == ["general"]:
+        return semantic_similarity >= 0.20 and score >= 0.45
+    if tag_overlap_score > 0:
+        return score >= 0.30
+    return semantic_similarity >= 0.25 and score >= 0.50
 
 
 def _protocol_action_map() -> dict[str, str]:
@@ -703,7 +747,23 @@ def _code_result_summary(payload: dict[str, Any]) -> str:
     stderr = str(codeact.get("stderr", "")).strip()
     exit_code = codeact.get("exit_code")
     return (
-        f"CodeAct exit_code={exit_code}; "
+        f"sandbox exit {exit_code}; "
         f"stdout={stdout[:500] or '<empty>'}; "
         f"stderr={stderr[:300] or '<empty>'}"
     )
+
+
+def _fallback_summary(
+    *,
+    evidence_count: int,
+    route: list[str],
+    code_result_summary: str,
+) -> str:
+    route_text = " -> ".join(route)
+    base = (
+        "Protocol Mode answer: structured collaboration completed with "
+        f"{evidence_count} evidence item(s) and route {route_text}."
+    )
+    if not code_result_summary:
+        return base
+    return f"{base}\n\nCodeAct result: {code_result_summary}"

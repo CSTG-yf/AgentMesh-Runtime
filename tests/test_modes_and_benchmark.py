@@ -2,10 +2,33 @@ from pathlib import Path
 
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.report import generate_report
+from agentmesh.llm.client import ChatMessage, LLMClient
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
+
+
+class TextModeFailingSummarizerLLM(LLMClient):
+    def complete(
+        self,
+        *,
+        agent_name: str,
+        messages: list[ChatMessage],
+        variables: dict[str, object] | None = None,
+    ) -> str:
+        _ = messages, variables
+        if agent_name == "summarizer":
+            raise RuntimeError("summarizer timed out")
+        if agent_name == "executor":
+            return (
+                "```python\n"
+                "data = [3, 1, 2]\n"
+                "sorted_data = sorted(data)\n"
+                "print(sorted_data)\n"
+                "```"
+            )
+        return f"{agent_name} output"
 
 
 def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -> None:
@@ -38,13 +61,24 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert text_result.metrics.memory_query_count == 0
     assert text_result.metrics.memory_hit_count == 0
     text_messages = read_jsonl(paths.text_messages)
+    text_agent_io = read_jsonl(paths.text_agent_io)
     assert [item["source_agent"] for item in text_messages] == [
         "planner",
         "retriever",
         "executor",
         "summarizer",
     ]
+    assert [item["agent"] for item in text_agent_io] == [
+        "planner",
+        "retriever",
+        "executor",
+        "summarizer",
+    ]
     assert text_messages[0]["content"] == task.read_text(encoding="utf-8")
+    assert text_agent_io[0]["input"]["content"] == task.read_text(encoding="utf-8")
+    assert text_agent_io[0]["output"]["content"]
+    assert text_agent_io[0]["transport"]["communication_model"] == "plain_text_full_context"
+    assert all("state://" not in item["input"]["content"] for item in text_agent_io)
     assert all("state://" not in item["content"] for item in text_messages)
     assert all("typed_envelope" not in item["content"] for item in text_messages)
     assert protocol_result.mode == "protocol"
@@ -79,6 +113,16 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert protocol_result.metrics.dynamic_route == ["planner", "retriever", "summarizer"]
     assert "executor" in protocol_result.metrics.skipped_agents
     assert paths.text_messages.exists()
+    protocol_agent_io = read_jsonl(paths.protocol_agent_io)
+    assert [item["agent"] for item in protocol_agent_io] == [
+        "planner",
+        "retriever",
+        "summarizer",
+    ]
+    assert protocol_agent_io[0]["input"]["action"] == "plan.create"
+    assert protocol_agent_io[0]["output"]["msg_type"] == "RESULT"
+    assert protocol_agent_io[0]["transport"]["communication_model"] == "amp_state_ref"
+    assert protocol_agent_io[0]["state_refs_in"]
     assert paths.protocol_states.exists()
 
 
@@ -162,4 +206,25 @@ tasks:
     assert "TransportSendCount" in report_text
     assert "StateShmTransferCount" in report_text
     assert "LatestDynamicRoute" in report_text
+    assert "Text Agent I/O Sample" in report_text
+    assert "Protocol Agent I/O Sample" in report_text
     assert len(read_jsonl(paths.benchmark_detail)) == 20
+
+
+def test_text_mode_summarizer_fallback_preserves_executor_output(tmp_path: Path) -> None:
+    task = tmp_path / "sort.txt"
+    task.write_text("Write quicksort and output the sorted result.", encoding="utf-8")
+    paths = RuntimePaths(root=tmp_path)
+
+    result = run_text_mode(
+        task_path=task,
+        paths=paths,
+        llm_client=TextModeFailingSummarizerLLM(),
+    )
+
+    assert "summarizer LLM unavailable" in result.answer
+    assert "print(sorted_data)" in result.answer
+    assert result.answer != "processed task with full text context."
+    agent_io = read_jsonl(paths.text_agent_io)
+    assert agent_io[-1]["agent"] == "summarizer"
+    assert "print(sorted_data)" in agent_io[-1]["output"]["content"]

@@ -45,6 +45,10 @@ class RuntimePaths(BaseModel):
         return self.protocol_dir / "messages.jsonl"
 
     @property
+    def protocol_agent_io(self) -> Path:
+        return self.protocol_dir / "agent_io.jsonl"
+
+    @property
     def protocol_states(self) -> Path:
         return self.protocol_dir / "states.jsonl"
 
@@ -59,6 +63,10 @@ class RuntimePaths(BaseModel):
     @property
     def text_messages(self) -> Path:
         return self.text_dir / "messages.jsonl"
+
+    @property
+    def text_agent_io(self) -> Path:
+        return self.text_dir / "agent_io.jsonl"
 
     @property
     def text_trace(self) -> Path:

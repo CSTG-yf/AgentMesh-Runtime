@@ -31,6 +31,25 @@ def test_sandbox_runner_captures_structured_result(tmp_path: Path) -> None:
     assert result.backend == "python"
 
 
+def test_sandbox_runner_resolves_relative_base_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    runner = SandboxRunner(
+        base_dir=Path("relative-sandbox"),
+        limits=SandboxLimits(timeout_seconds=2),
+        use_warm_worker=False,
+        use_rust=False,
+    )
+
+    result = runner.run_python("print('relative ok')")
+
+    assert runner.base_dir.is_absolute()
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "relative ok"
+
+
 def test_sandbox_runner_raises_timeout(tmp_path: Path) -> None:
     runner = SandboxRunner(
         base_dir=tmp_path,

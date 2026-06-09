@@ -3,6 +3,7 @@ from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
 from agentmesh.protocol.transport import AgentTransport, InProcTransport, TransportMetrics
 from agentmesh.runtime.registry import AgentRegistry, RuntimeContext
+from agentmesh.storage.agent_io import append_protocol_agent_io
 
 
 class SyncScheduler:
@@ -54,6 +55,19 @@ class ProtocolScheduler:
         self.messages.append(message)
         result = self.transport.send(message)
         self.messages.append(result)
+        append_protocol_agent_io(
+            paths=self.context.paths,
+            trace_id=self.context.trace_id,
+            step=len(self.selected_agents) + 1,
+            source_agent=source_agent,
+            agent=agent.name,
+            action=action,
+            params=message.params,
+            result=result.result,
+            state_refs_in=message.state_refs,
+            state_refs_out=result.state_refs,
+            result_msg_type=result.msg_type.value,
+        )
         self.selected_agents.append(agent.name)
         return result
 

@@ -7,6 +7,7 @@ from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
 from agentmesh.eval.quality import deterministic_quality_score
 from agentmesh.llm.client import ChatMessage, LLMClient, create_llm_client
 from agentmesh.runtime.registry import RuntimeContext
+from agentmesh.storage.agent_io import append_text_agent_io
 from agentmesh.storage.jsonl import append_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
@@ -53,6 +54,15 @@ def run_text_mode(
             full_context=context,
             runtime_context=runtime_context,
         )
+        append_text_agent_io(
+            paths=paths,
+            trace_id=trace_id,
+            step=index + 1,
+            agent=agent,
+            target_agent=target,
+            input_content=context,
+            output_content=response,
+        )
         final_response = response
         context = f"{context}\n[{agent}] {response}"
     answer = final_response.strip()
@@ -95,7 +105,7 @@ def _text_agent_response(
         )
         return str(response)
     except Exception:
-        return "processed task with full text context."
+        return _fallback_text_agent_response(agent=agent, full_context=full_context)
 
 
 def _create_text_mode_llm_client(runtime_context: RuntimeContext) -> LLMClient | None:
@@ -110,6 +120,35 @@ def _create_text_mode_llm_client(runtime_context: RuntimeContext) -> LLMClient |
         }
     )
     return create_llm_client(config)
+
+
+def _fallback_text_agent_response(*, agent: str, full_context: str) -> str:
+    if agent != "summarizer":
+        return "processed task with full text context."
+    latest_output = (
+        _latest_agent_output(full_context, "executor")
+        or _latest_agent_output(full_context, "retriever")
+        or _latest_agent_output(full_context, "planner")
+    )
+    if not latest_output:
+        return "processed task with full text context."
+    return (
+        "Text Mode answer: summarizer LLM unavailable; "
+        "preserving latest upstream agent output.\n\n"
+        f"{latest_output}"
+    )
+
+
+def _latest_agent_output(full_context: str, agent: str) -> str:
+    marker = f"\n[{agent}] "
+    start = full_context.rfind(marker)
+    if start == -1:
+        return ""
+    start += len(marker)
+    next_marker = full_context.find("\n[", start)
+    if next_marker == -1:
+        return full_context[start:].strip()
+    return full_context[start:next_marker].strip()
 
 
 def _text_mode_system_prompt(

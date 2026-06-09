@@ -8,6 +8,8 @@ from agentmesh.runtime.decision import PlannerDecision
 from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.runtime.scheduler import ProtocolScheduler
+from agentmesh.state.schema import StateType
+from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
@@ -29,6 +31,37 @@ def test_planner_decision_classifies_benchmark_with_tool_execution() -> None:
     assert decision.need_tool_execution
     assert "tool.run_python" in decision.required_capabilities
     assert decision.execution_route == ["planner", "retriever", "executor", "summarizer"]
+
+
+def test_planner_decision_classifies_chinese_sort_request_with_tool_execution() -> None:
+    decision = PlannerDecision.from_task(
+        "[1,3,11,231,4,55,66,1231,1,2] 写一个快速排序并输出排序后的结果"
+    )
+
+    assert decision.intent == "validation"
+    assert decision.need_tool_execution
+    assert "tool.run_python" in decision.required_capabilities
+    assert decision.execution_route == ["planner", "retriever", "executor", "summarizer"]
+
+
+def test_planner_decision_keeps_tool_execution_when_llm_json_under_routes() -> None:
+    decision = PlannerDecision.from_llm_or_task(
+        "[1,3,11,231,4,55,66,1231,1,2] 写一个快速排序并输出排序后的结果",
+        """
+        {
+          "intent": "analysis",
+          "required_capabilities": ["summary.create"],
+          "execution_route": ["planner", "summarizer"],
+          "need_retrieval": false,
+          "need_tool_execution": false,
+          "need_summary": true
+        }
+        """,
+    )
+
+    assert decision.need_tool_execution
+    assert "executor" in decision.execution_route
+    assert "tool.run_python" in decision.required_capabilities
 
 
 def test_planner_decision_normalizes_inconsistent_llm_json() -> None:
@@ -152,6 +185,30 @@ def test_protocol_mode_invokes_executor_and_feedback_for_benchmark_task(
     messages = read_jsonl(paths.protocol_messages)
     assert any(item.get("action") == "plan.refine" for item in messages)
     assert any(item.get("action") == "evidence.refine" for item in messages)
+
+
+def test_protocol_mode_executes_chinese_quicksort_request(tmp_path: Path) -> None:
+    task = tmp_path / "sort.txt"
+    task.write_text(
+        "[1,3,11,231,4,55,66,1231,1,2] 写一个快速排序并输出排序后的结果",
+        encoding="utf-8",
+    )
+    paths = RuntimePaths(root=tmp_path)
+
+    result = run_protocol_mode(task, paths)
+
+    assert "executor" in result.metrics.selected_agents
+    assert "sandbox exit 0" in result.answer
+    assert "[1, 1, 2, 3, 4, 11, 55, 66, 231, 1231]" in result.answer
+    state_store = StateStore(paths)
+    executor_payloads = [
+        state_store.get(record.ref)[1]
+        for record in state_store.list_by_trace(result.trace_id)
+        if record.producer == "executor" and record.state_type == StateType.CODE_RESULT
+    ]
+    assert executor_payloads
+    assert executor_payloads[0]["exit_code"] == 0
+    assert "[1, 1, 2, 3, 4, 11, 55, 66, 231, 1231]" in executor_payloads[0]["stdout"]
 
 
 def test_tool_feedback_parses_structured_executor_stdout() -> None:

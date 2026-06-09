@@ -8,6 +8,8 @@ from agentmesh.storage.paths import RuntimePaths
 def generate_report(paths: RuntimePaths) -> Path:
     summary = _read_summary(paths.benchmark_summary)
     messages = read_jsonl(paths.protocol_messages)[:5]
+    text_agent_io = read_jsonl(paths.text_agent_io)[:5]
+    protocol_agent_io = read_jsonl(paths.protocol_agent_io)[:5]
     states = read_jsonl(paths.protocol_states)[:5]
     memory = read_jsonl(paths.protocol_memory)[:5]
     trace = read_jsonl(paths.protocol_trace)
@@ -54,6 +56,16 @@ def generate_report(paths: RuntimePaths) -> Path:
         "## Protocol Log Sample",
         "```json",
         *[str(item) for item in messages],
+        "```",
+        "",
+        "## Text Agent I/O Sample",
+        "```json",
+        *[str(item) for item in text_agent_io],
+        "```",
+        "",
+        "## Protocol Agent I/O Sample",
+        "```json",
+        *[str(item) for item in protocol_agent_io],
         "```",
         "",
         "## StateRef Sample",

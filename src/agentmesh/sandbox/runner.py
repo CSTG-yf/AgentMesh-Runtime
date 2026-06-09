@@ -33,7 +33,7 @@ class SandboxRunner:
         use_warm_worker: bool = False,
         use_rust: bool = True,
     ) -> None:
-        self.base_dir = base_dir
+        self.base_dir = base_dir.resolve()
         self.limits = limits or SandboxLimits()
         self.use_warm_worker = use_warm_worker
         self.use_rust = use_rust

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from uuid import uuid4
 
 from rich.console import Console
 from rich.prompt import Prompt
 
-from agentmesh.chat.session import ChatTurn, run_chat_turn
+from agentmesh.chat.session import ChatTurn
 from agentmesh.config import AgentMeshConfig
 from agentmesh.core import rust_available
 from agentmesh.eval.benchmark import run_benchmark
@@ -136,9 +137,27 @@ class ShellSession:
         if not message:
             self.console.print("[red]Usage:[/red] /ask <message>")
             return
-        turn = run_chat_turn(message, context=self.context, history=self.history)
+        task_path = self._write_ask_task(message)
+        result = run_protocol_mode(
+            task_path=task_path,
+            paths=self.paths,
+            load_configured_llm=True,
+        )
+        turn = ChatTurn(user=message, assistant=result.answer)
         self.history.append(turn)
-        self.console.print(f"[bold]agentmesh[/bold]: {turn.assistant}")
+        self.console.print("[bold]agentmesh[/bold]: ", end="")
+        self.console.print(turn.assistant, markup=False)
+
+    def _write_ask_task(self, message: str) -> Path:
+        self.paths.ensure()
+        task_dir = self.paths.latest_run / "user_tasks"
+        task_dir.mkdir(parents=True, exist_ok=True)
+        task_path = task_dir / f"ask-{uuid4().hex[:8]}.txt"
+        task_path.write_text(
+            _protocol_ask_task_text(message=message, history=self.history),
+            encoding="utf-8",
+        )
+        return task_path
 
     def _run_mode(self, args: list[str]) -> None:
         if len(args) != 2 or args[0] not in {"text", "protocol"}:
@@ -182,7 +201,12 @@ class ShellSession:
 
     def _trace(self, args: list[str]) -> None:
         limit = int(args[0]) if args else 10
-        rows = read_jsonl(self.paths.text_trace) + read_jsonl(self.paths.protocol_trace)
+        rows = (
+            read_jsonl(self.paths.text_trace)
+            + read_jsonl(self.paths.text_agent_io)
+            + read_jsonl(self.paths.protocol_trace)
+            + read_jsonl(self.paths.protocol_agent_io)
+        )
         for item in rows[-limit:]:
             self.console.print(item)
 
@@ -213,6 +237,30 @@ def run_shell(
     input_func: InputFunc | None = None,
 ) -> None:
     ShellSession(paths=paths, console=console).run(input_func=input_func)
+
+
+def _protocol_ask_task_text(*, message: str, history: list[ChatTurn]) -> str:
+    lines = [
+        "You are answering inside an interactive AgentMesh shell session.",
+        "Use the conversation history as context, then answer the current user request.",
+        "",
+    ]
+    if history:
+        lines.append("Conversation history:")
+        for turn in history:
+            lines.append(f"User: {turn.user}")
+            lines.append(f"Assistant: {turn.assistant}")
+        lines.append("")
+    lines.extend(
+        [
+            "Current user request:",
+            f"User: {message}",
+            "",
+            "Route this request through the AgentMesh protocol workflow.",
+            "Produce a helpful final answer.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _suite_path(root: Path, value: str) -> Path:

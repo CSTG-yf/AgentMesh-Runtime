@@ -16,6 +16,9 @@
 | 11 | Explicit plain-text vs structured AMP/Rust communication comparison metrics | Completed | `tests/test_modes_and_benchmark.py` |
 | 12 | CodeAct execution, Rust typed envelope codec, prompt compare CLI, long-context benchmark, readable Chinese README | Completed | `tests/test_compare_prompt.py`, `tests/test_typed_envelope.py`, `tests/test_real_agent_protocol_mode.py` |
 | 13 | Full README refresh: project overview, mechanisms, metric formulas, CLI usage, env policy, and file-by-file architecture notes | Completed | `git diff --check -- README.md` |
+| 14 | Shell `/ask` routes through Protocol Mode instead of direct interactive chat | Completed | `tests/test_shell.py::test_shell_ask_routes_through_protocol_mode` |
+| 15 | Shell `/ask` answer fidelity: preserve code brackets, route Chinese sort/code tasks to Executor, deterministic quicksort CodeAct, absolute sandbox paths | Completed | `tests/test_shell.py`, `tests/test_dynamic_agent_routing.py`, `tests/test_sandbox_runner.py` |
+| 16 | Agent I/O audit logs for Text and Protocol modes plus scored memory reuse filtering | Completed | `tests/test_modes_and_benchmark.py`, `tests/test_shell.py`, `tests/test_hybrid_memory.py` |
 
 Latest verified command:
 

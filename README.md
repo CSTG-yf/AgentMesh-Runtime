@@ -261,7 +261,7 @@ Shell 中直接输入一段任务文本，默认执行 `/compare`。常用命令
 /exit
 ```
 
-`/ask` 使用 interactive prompt 和已配置模型做连续对话；`/compare` 仍按公平边界同时跑 Text Mode 和 Protocol Mode。
+`/ask` 会把当前问题和 shell 历史写成临时 task，然后调用 Protocol Mode，因此会经过 Planner、Retriever、Executor、Summarizer、AMP、StateRef、Memory 和 trace 链路；`/compare` 仍按公平边界同时跑 Text Mode 和 Protocol Mode。
 
 ## Benchmark 和报告
 
@@ -291,12 +291,14 @@ runs/latest/
     state_index.sqlite        # StateRecord 索引
     states/                   # state payload 文件
   protocol/
+    agent_io.jsonl             # Protocol Mode 每个 Agent 的输入、输出、state refs 和 action
     messages.jsonl            # AMP 协议消息
     memory.jsonl              # 本轮记忆写入日志
     states.jsonl              # 状态日志和 lineage
     trace.jsonl               # Protocol trace
   sandbox/                    # CodeAct 临时执行目录
   text/
+    agent_io.jsonl             # Text Mode 每个 Agent 收到的全文上下文和输出
     messages.jsonl            # Text Mode 消息
     trace.jsonl               # Text Mode trace
 ```
@@ -472,7 +474,7 @@ E:/system-compute/
   examples/tasks/long_context_B5.txt             # 长上下文 B 组第 5 轮
 
   prompts/executor.md                            # ExecutorAgent 初始提示词模板
-  prompts/interactive.md                         # chat/shell /ask 交互助手提示词模板
+  prompts/interactive.md                         # chat 命令使用的交互助手提示词模板
   prompts/planner.md                             # PlannerAgent 初始提示词模板
   prompts/retriever.md                           # RetrieverAgent 初始提示词模板
   prompts/summarizer.md                          # SummarizerAgent 初始提示词模板
@@ -496,7 +498,7 @@ E:/system-compute/
   src/agentmesh/agents/summarizer.py             # SummarizerAgent，最终回答和记忆摘要生成
 
   src/agentmesh/chat/__init__.py                 # chat 包导出
-  src/agentmesh/chat/session.py                  # 单轮/历史对话会话逻辑
+  src/agentmesh/chat/session.py                  # chat 命令的单轮/历史对话逻辑
 
   src/agentmesh/eval/__init__.py                 # eval 包导出
   src/agentmesh/eval/benchmark.py                # Benchmark suite 读取、双模式运行和聚合

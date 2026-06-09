@@ -36,6 +36,14 @@ class PlannerDecision(BaseModel):
             "计算",
             "评测",
             "跑一次",
+            "写代码",
+            "写一个",
+            "脚本",
+            "代码",
+            "输出结果",
+            "打印",
+            "排序",
+            "快速排序",
             "benchmark",
             "bench",
             "codeact",
@@ -44,6 +52,12 @@ class PlannerDecision(BaseModel):
             "test",
             "validate",
             "calculate",
+            "compute",
+            "code",
+            "script",
+            "sort",
+            "quicksort",
+            "quick sort",
         ]
         retrieval_words = [
             "检索",
@@ -92,6 +106,14 @@ class PlannerDecision(BaseModel):
             return fallback
         if not decision.execution_route or not decision.required_capabilities:
             return fallback
+        if fallback.need_tool_execution and not decision.need_tool_execution:
+            decision = decision.model_copy(
+                update={
+                    "intent": "validation",
+                    "need_tool_execution": True,
+                    "reason": f"{decision.reason}; task keywords require tool execution",
+                }
+            ).normalized()
         return decision
 
     def normalized(self) -> PlannerDecision:
