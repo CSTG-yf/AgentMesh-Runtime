@@ -64,6 +64,33 @@ def test_planner_decision_keeps_tool_execution_when_llm_json_under_routes() -> N
     assert "tool.run_python" in decision.required_capabilities
 
 
+def test_planner_decision_normalizes_route_from_capability_advertisements() -> None:
+    capability_to_agent = {
+        "plan.create": "planner",
+        "memory.semantic_search": "retriever",
+        "tool.run_python": "sandboxer",
+        "summary.create": "summarizer",
+    }
+
+    decision = PlannerDecision.from_task(
+        "run quicksort code",
+        capability_to_agent=capability_to_agent,
+    )
+
+    assert decision.required_capabilities == [
+        "plan.create",
+        "memory.semantic_search",
+        "tool.run_python",
+        "summary.create",
+    ]
+    assert decision.execution_route == [
+        "planner",
+        "retriever",
+        "sandboxer",
+        "summarizer",
+    ]
+
+
 def test_planner_decision_normalizes_inconsistent_llm_json() -> None:
     decision = PlannerDecision.from_llm_or_task(
         "validate protocol benchmark",
@@ -209,6 +236,32 @@ def test_protocol_mode_executes_chinese_quicksort_request(tmp_path: Path) -> Non
     assert executor_payloads
     assert executor_payloads[0]["exit_code"] == 0
     assert "[1, 1, 2, 3, 4, 11, 55, 66, 231, 1231]" in executor_payloads[0]["stdout"]
+
+
+def test_protocol_mode_executes_chinese_quick_sort_abbreviation_with_self_test(
+    tmp_path: Path,
+) -> None:
+    task = tmp_path / "quick_sort_abbreviation.txt"
+    task.write_text(
+        "实现一个快排，并且自建用例 输入输出和快排函数要在结果中显现",
+        encoding="utf-8",
+    )
+    paths = RuntimePaths(root=tmp_path)
+
+    result = run_protocol_mode(task, paths)
+
+    assert "executor" in result.metrics.selected_agents
+    state_store = StateStore(paths)
+    executor_payloads = [
+        state_store.get(record.ref)[1]
+        for record in state_store.list_by_trace(result.trace_id)
+        if record.producer == "executor" and record.state_type == StateType.CODE_RESULT
+    ]
+    assert executor_payloads
+    stdout = executor_payloads[0]["stdout"]
+    assert '"algorithm": "quick_sort"' in stdout
+    assert '"input":' in stdout
+    assert '"sorted":' in stdout
 
 
 def test_tool_feedback_parses_structured_executor_stdout() -> None:

@@ -1,11 +1,14 @@
 import hashlib
 import math
-import re
 
 import pytest
 
 from agentmesh.core import rust_available, rust_core
-from agentmesh.state.embedding import HashEmbeddingEncoder, cosine_similarity
+from agentmesh.state.embedding import (
+    HashEmbeddingEncoder,
+    _hash_embedding_tokens,
+    cosine_similarity,
+)
 
 requires_rust_core = pytest.mark.skipif(
     not rust_available(),
@@ -14,7 +17,7 @@ requires_rust_core = pytest.mark.skipif(
 
 
 def _python_reference_hash_embedding(text: str, dimensions: int) -> list[float]:
-    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    tokens = _hash_embedding_tokens(text)
     if not tokens:
         return [0.0] * dimensions
     bigrams = [
@@ -36,7 +39,7 @@ def _python_reference_hash_embedding(text: str, dimensions: int) -> list[float]:
 
 @requires_rust_core
 def test_rust_hash_embedding_matches_python_reference() -> None:
-    text = "agent state passing memory"
+    text = "agent state passing memory 留学择校因素"
     expected = _python_reference_hash_embedding(text, 384)
     actual = [float(value) for value in rust_core().hash_embedding(text, 384)]
 

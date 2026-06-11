@@ -68,6 +68,43 @@ def test_memory_store_semantic_search_uses_inline_embedding_vector(tmp_path: Pat
     assert results[0].memory_id == unit.memory_id
 
 
+def test_memory_store_semantic_search_handles_chinese_query(tmp_path: Path) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    state_store = StateStore(paths)
+    encoder = HashEmbeddingEncoder()
+    memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
+    relevant = MemoryUnit(
+        source_agent="summarizer",
+        task_topic="留学择校",
+        summary="留学择校问题需要比较学校排名、专业匹配、费用和签证风险。",
+        tags=["study_abroad"],
+        evidence_refs=[],
+        state_refs=[],
+        embedding_vector=encoder.encode("留学择校问题的考量因素"),
+        confidence=0.9,
+        validity_score=0.9,
+        provenance_trace_id="trace-cn",
+    )
+    unrelated = MemoryUnit(
+        source_agent="summarizer",
+        task_topic="快速排序",
+        summary="快速排序通过分治和基准值划分列表。",
+        tags=["code"],
+        evidence_refs=[],
+        state_refs=[],
+        embedding_vector=encoder.encode("快速排序代码实现"),
+        confidence=0.9,
+        validity_score=0.9,
+        provenance_trace_id="trace-sort",
+    )
+
+    memory_store.put(unrelated)
+    memory_store.put(relevant)
+
+    results = memory_store.semantic_search("留学选校因素", limit=1)
+    assert results[0].memory_id == relevant.memory_id
+
+
 def test_memory_store_semantic_search_prefilters_candidates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

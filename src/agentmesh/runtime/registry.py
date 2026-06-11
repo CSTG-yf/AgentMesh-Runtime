@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agentmesh.config import AgentMeshConfig
 from agentmesh.errors import CapabilityNotFoundError
@@ -20,6 +20,10 @@ class RuntimeContext(BaseModel):
     config: AgentMeshConfig
     prompts: PromptTemplateStore
     llm_client: Any = None
+    capability_to_agent: dict[str, str] = Field(default_factory=dict)
+    state_store: Any = None
+    embedding_encoder: Any = None
+    memory_store: Any = None
 
     @classmethod
     def from_paths(
@@ -62,3 +66,10 @@ class AgentRegistry:
             if capability in agent.capabilities:
                 return agent
         raise CapabilityNotFoundError(f"No registered agent provides {capability}")
+
+    def capability_owner_map(self) -> dict[str, str]:
+        owners: dict[str, str] = {}
+        for agent in self._agents.values():
+            for capability in agent.capabilities:
+                owners.setdefault(capability, agent.name)
+        return owners

@@ -28,7 +28,7 @@ Text Mode 是传统 baseline。Agent 按固定链路协作，每次 handoff 都�
 
 Protocol Mode 是 AgentMesh 方案。Agent 通过 AMP 结构化消息协作，payload 落入 StateStore，handoff 中主要传递 `state://...` 引用；运行时可使用 Typed Envelope、共享记忆、CodeAct、动态路由、反馈回合和可选 Rust Core。
 
-Benchmark 默认关闭 LLM，保证可复现；使用 `--llm` 时可以验证真实模型 Agent，但这时结果会受模型、网络和服务端状态影响。
+`agentmesh run`、`agentmesh compare` 和 shell `/compare` 默认加载 `.env` 中配置的 LLM；需要离线可复现实验时显式传 `--no-llm`。Benchmark 默认关闭 LLM，保证评测可复现。
 
 ## 架构设计
 
@@ -101,6 +101,8 @@ state://code_result/<state_id>
 state://summary/<state_id>
 ```
 
+Agent 的 `handle()` 会通过 `StateStore.get(ref)` 读取引用指向的 payload，并通过 `StateStore.add_consumer(ref, agent)` 记录真实消费关系；`params` 只保留 action 控制信息，不再承载完整 task/evidence payload。
+
 每条 `StateRecord` 记录 producer、consumer、parent refs、payload 大小、metadata、是否写入记忆等信息，因此可以追踪 lineage。配置 `AGENTMESH_STATE_PAYLOAD_BACKEND=shm` 后，大于阈值的 payload 会走 Python shared memory，并统计 `state_shm_transfer_count` 和 `state_shm_transfer_bytes`。
 
 ### Embedding
@@ -116,7 +118,7 @@ state://summary/<state_id>
 - 当前 run 记忆：`runs/latest/data/memory.sqlite`，随 run 产物生成。
 - 全局长期记忆：`data/agentmesh_memory.sqlite`，不会因为清理 `runs/latest` 而丢失。
 
-`HybridMemoryStore` 会合并两层检索结果并去重。检索方式包括：
+`RetrieverAgent` 负责记忆检索：运行时发送 `memory.semantic_search` action、query tags 和 query StateRef；RetrieverAgent 读取 StateRef 后调用 `HybridMemoryStore`，并把命中的 MemoryUnit 作为 evidence 返回。`HybridMemoryStore` 会合并两层检索结果并去重。检索方式包括：
 
 - 关键词检索：SQLite FTS5。
 - 标签检索：匹配 `MemoryUnit.tags`。
@@ -126,7 +128,7 @@ state://summary/<state_id>
 
 ### 动态路由和反馈
 
-`PlannerDecision` 会根据用户意图和模型输出归一化出执行路线：
+`PlannerDecision` 会根据用户意图和模型输出先归一化出所需 capability，再通过启动时能力声明形成的 `capability -> agent` 映射得到执行路线：
 
 ```text
 analysis route: PlannerAgent -> RetrieverAgent -> SummarizerAgent
@@ -147,7 +149,7 @@ Sandbox 输出 `stdout`、`stderr`、`exit_code`、`latency_ms` 和 backend 信�
 
 ### LLM 和提示词模板
 
-真实可互动 Agent 通过 OpenAI-compatible Chat Completions 接口接入。只要 `.env` 中配置了 base URL、API key 和 model，`--llm`、`chat`、`shell /ask` 就可以调用模型。
+真实可互动 Agent 通过 OpenAI-compatible Chat Completions 接口接入。只要 `.env` 中配置了 base URL、API key 和 model，`run`、`compare`、`chat`、`shell /ask` 和 shell `/compare` 默认会调用模型；需要关闭模型时使用 `--no-llm`。
 
 初始提示词模板单独存储在 `prompts/`：
 
@@ -225,10 +227,10 @@ uv run agentmesh run --mode protocol --task examples/tasks/A1_requirements.txt
 uv run agentmesh compare "分析 AgentMesh Runtime 如何减少多 Agent 协作中的重复上下文传递"
 ```
 
-允许两套系统调用你在 `.env` 中配置的模型：
+离线运行，不调用 `.env` 中配置的模型：
 
 ```bash
-uv run agentmesh compare "生成一个多步骤评测方案" --llm
+uv run agentmesh compare "生成一个多步骤评测方案" --no-llm
 ```
 
 单轮聊天：
@@ -245,11 +247,11 @@ uv run agentmesh chat --message "解释 AgentMesh 的 StateRef 机制"
 uv run agentmesh shell
 ```
 
-Shell 中直接输入一段任务文本，默认执行 `/compare`。常用命令：
+Shell 中直接输入一段消息，默认等同于 `/ask`，会走 Protocol Mode 交互式 LLM Agent。需要实验对比时显式使用 `/compare`。常用命令：
 
 ```text
 /help
-/compare [--llm] <task>
+/compare [--no-llm] <task>
 /ask <message>
 /run text|protocol <task-file>
 /benchmark standard
@@ -261,7 +263,9 @@ Shell 中直接输入一段任务文本，默认执行 `/compare`。常用命令
 /exit
 ```
 
-`/ask` 会把当前问题和 shell 历史写成临时 task，然后调用 Protocol Mode，因此会经过 Planner、Retriever、Executor、Summarizer、AMP、StateRef、Memory 和 trace 链路；`/compare` 仍按公平边界同时跑 Text Mode 和 Protocol Mode。
+直接输入文本和 `/ask` 都会把当前问题及 shell 历史写成临时 task，然后调用 Protocol Mode，因此会经过 Planner、Retriever、Executor、Summarizer、AMP、StateRef、Memory 和 trace 链路；运行期间会流式打印每个 Protocol Agent 的输出面板，最后打印最终回答。`/compare` 仍按公平边界同时跑 Text Mode 和 Protocol Mode。
+
+`/compare` 和 `uv run agentmesh compare` 会并行启动 Text Mode 与 Protocol Mode，并在每个 Agent 完成时流式打印该 Agent 的输出。最终界面顺序为：两种模式的最终回答、两种模式的 Agent 输出明细、最后的指标表。
 
 ## Benchmark 和报告
 
@@ -305,7 +309,7 @@ runs/latest/
 
 ## 大模型和环境配置
 
-本地密钥写在 `.env` 中，仓库通过 `.gitignore` 忽略 `.env` 和 `.env.*`，只保留安全模板 `.env.example`。你已经在 `.env` 中配置模型接口后，可以直接使用 `--llm`、`chat` 或 `shell /ask`。
+本地密钥写在 `.env` 中，仓库通过 `.gitignore` 忽略 `.env` 和 `.env.*`，只保留安全模板 `.env.example`。你已经在 `.env` 中配置模型接口后，可以直接使用 `run`、`compare`、`chat` 或 `shell /ask`；不使用模型时加 `--no-llm`。
 
 常用变量：
 
@@ -495,6 +499,7 @@ E:/system-compute/
   src/agentmesh/agents/executor.py               # ExecutorAgent，生成 CodeAct Python 或确定性执行输入
   src/agentmesh/agents/planner.py                # PlannerAgent，意图识别和执行路线规划
   src/agentmesh/agents/retriever.py              # RetrieverAgent，记忆检索和 evidence 构建
+  src/agentmesh/agents/state_refs.py             # Agent 读取 StateRef payload 并记录 consumer
   src/agentmesh/agents/summarizer.py             # SummarizerAgent，最终回答和记忆摘要生成
 
   src/agentmesh/chat/__init__.py                 # chat 包导出
@@ -568,6 +573,7 @@ E:/system-compute/
 
   tests/test_capability_handshake.py             # capability handshake 单元测试
   tests/test_compare_prompt.py                   # compare prompt 双模式测试
+  tests/test_agent_state_refs.py                 # Agent 真实读取 StateRef 和记忆检索归属测试
   tests/test_config.py                           # 配置加载测试
   tests/test_core_optional.py                    # Rust Core 可选加载测试
   tests/test_dynamic_agent_routing.py            # 动态路由测试
@@ -607,6 +613,6 @@ make all
 ## 当前边界
 
 - Socket transport 已有 frame 实现和测试基础，但默认运行仍使用 in-process transport。
-- Benchmark 默认关闭 LLM，主要衡量通信协议和状态传递机制；启用 `--llm` 后可用于真实交互验证。
+- `run`、`compare` 和 shell `/compare` 默认使用 LLM；Benchmark 默认关闭 LLM，主要衡量通信协议和状态传递机制。
 - Sandbox 是轻量隔离和比赛原型，不等同于生产级容器、WASM 或硬隔离环境。
 - HashEmbedding 是可复现离线检索基线，真实语义效果建议接入 TEI 或后续 embedding 服务。

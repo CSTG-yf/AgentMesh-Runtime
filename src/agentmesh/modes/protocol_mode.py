@@ -99,6 +99,12 @@ def _run_protocol_mode_impl(
     encoder = create_embedding_encoder(context.config.embedding)
     memory_store = HybridMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
     registry = default_registry()
+    context = context.model_copy(update={
+        "capability_to_agent": registry.capability_owner_map(),
+        "state_store": state_store,
+        "embedding_encoder": encoder,
+        "memory_store": memory_store,
+    })
     messages: list[AMPMessage] = []
     protocol_map = _protocol_action_map()
     scheduler = ProtocolScheduler(
@@ -167,10 +173,10 @@ def _run_protocol_mode_impl(
     planner_result = scheduler.invoke(
         source_agent="runtime",
         action="plan.create",
-        params={"task": task},
+        params={},
         state_refs=[task_ref, query_ref],
     )
-    decision = _planner_decision(planner_result, task)
+    decision = _planner_decision(planner_result, task, context.capability_to_agent)
     plan_summary = _planner_summary(planner_result)
     plan_ref = state_store.put_summary(
         trace_id=trace_id,
@@ -195,8 +201,7 @@ def _run_protocol_mode_impl(
     )
     mark_stage("planner", stage_start)
 
-    query_tags = _derive_tags(task)
-    memory_hits = []
+    memory_hits: list[str] = []
     evidence: list[dict[str, Any]] = []
     evidence_ref: str | None = None
     refined_plan_ref: str | None = None
@@ -215,19 +220,6 @@ def _run_protocol_mode_impl(
 
     if decision.need_retrieval:
         stage_start = time.perf_counter()
-        memory_results = [
-            result
-            for result in memory_store.semantic_search_with_scores(task, query_tags=query_tags)
-            if _should_reuse_memory_result(
-                score=float(result.score),
-                semantic_similarity=float(result.semantic_similarity),
-                tag_overlap_score=float(result.tag_overlap_score),
-                query_tags=query_tags,
-            )
-        ]
-        memory_hits = [result.memory for result in memory_results]
-        for hit in memory_hits:
-            memory_store.increment_reuse(hit.memory_id)
         memory_query_count = 1
         mark_stage("memory_search", stage_start)
 
@@ -235,22 +227,11 @@ def _run_protocol_mode_impl(
         retriever_result = scheduler.invoke(
             source_agent="planner",
             action="memory.semantic_search",
-            params={"query": task},
+            params={},
             state_refs=[task_ref, query_ref, plan_ref],
         )
         evidence = list(retriever_result.result["evidence"])
-        evidence.extend(
-            {
-                "title": result.memory.task_topic,
-                "snippet": result.memory.summary,
-                "memory_id": result.memory.memory_id,
-                "memory_score": round(float(result.score), 4),
-                "semantic_similarity": round(float(result.semantic_similarity), 4),
-                "tag_overlap_score": round(float(result.tag_overlap_score), 4),
-                "reason": result.reason,
-            }
-            for result in memory_results
-        )
+        memory_hits = _memory_units_from_evidence(evidence)
         evidence_ref = state_store.put_evidence(
             trace_id=trace_id,
             producer="retriever",
@@ -275,12 +256,11 @@ def _run_protocol_mode_impl(
 
     if decision.need_tool_execution:
         stage_start = time.perf_counter()
-        evidence_digest = _evidence_digest(evidence)
         executor_result = scheduler.invoke(
             source_agent="retriever" if evidence_ref else "planner",
             action="tool.run_python",
-            params={"task": task, "evidence": evidence_digest},
-            state_refs=[ref for ref in [evidence_ref] if ref],
+            params={},
+            state_refs=[ref for ref in [task_ref, evidence_ref] if ref],
         )
         mark_stage("executor", stage_start)
 
@@ -339,8 +319,8 @@ def _run_protocol_mode_impl(
             refined_plan_result = scheduler.invoke(
                 source_agent="executor",
                 action="plan.refine",
-                params={"task": task, "tool_feedback": tool_feedback},
-                state_refs=feedback_refs,
+                params={"tool_feedback": tool_feedback},
+                state_refs=[task_ref] + feedback_refs,
             )
             refined_plan_ref = state_store.put_summary(
                 trace_id=trace_id,
@@ -364,8 +344,12 @@ def _run_protocol_mode_impl(
             refined_evidence_result = scheduler.invoke(
                 source_agent="planner" if refined_plan_ref else "executor",
                 action="evidence.refine",
-                params={"query": task, "tool_feedback": tool_feedback},
-                state_refs=feedback_refs + ([refined_plan_ref] if refined_plan_ref else []),
+                params={"tool_feedback": tool_feedback},
+                state_refs=(
+                    [task_ref]
+                    + feedback_refs
+                    + ([refined_plan_ref] if refined_plan_ref else [])
+                ),
             )
             refined_items = list(refined_evidence_result.result.get("evidence", []))
             evidence.extend(refined_items)
@@ -399,18 +383,8 @@ def _run_protocol_mode_impl(
         source_agent=summarizer_source,
         action="summary.create",
         params={
-            "code_result": code_result_summary,
             "tool_feedback": tool_feedback or {},
             "dynamic_route": scheduler.selected_agents,
-            "state_context": {
-                "task": task,
-                "plan": plan_summary,
-                "refined_plan": refined_plan_summary,
-                "evidence": evidence,
-                "code_result": code_result_summary,
-                "tool_feedback": tool_feedback or {},
-                "dynamic_route": scheduler.selected_agents,
-            },
         },
         state_refs=summary_state_refs,
     )
@@ -543,36 +517,13 @@ def _run_protocol_mode_impl(
     return ModeRunResult(mode="protocol", trace_id=trace_id, answer=summary_text, metrics=metrics)
 
 
-def _derive_tags(text: str) -> list[str]:
-    lowered = text.lower()
-    tag_terms = {
-        "protocol": ["protocol", "协议"],
-        "state": ["state", "状态"],
-        "memory": ["memory", "记忆"],
-        "benchmark": ["benchmark", "评测", "基准"],
-        "agent": ["agent"],
-        "runtime": ["runtime"],
-        "code": ["代码", "脚本", "排序", "quicksort", "quick sort", "sort"],
-    }
-    tags: list[str] = []
-    for candidate, terms in tag_terms.items():
-        if any(term in lowered for term in terms):
-            tags.append(candidate)
-    return tags or ["general"]
-
-
-def _should_reuse_memory_result(
-    *,
-    score: float,
-    semantic_similarity: float,
-    tag_overlap_score: float,
-    query_tags: list[str],
-) -> bool:
-    if query_tags == ["general"]:
-        return semantic_similarity >= 0.20 and score >= 0.45
-    if tag_overlap_score > 0:
-        return score >= 0.30
-    return semantic_similarity >= 0.25 and score >= 0.50
+def _memory_units_from_evidence(evidence: list[dict[str, Any]]) -> list[str]:
+    memory_ids: list[str] = []
+    for item in evidence:
+        memory_id = item.get("memory_id")
+        if isinstance(memory_id, str) and memory_id:
+            memory_ids.append(memory_id)
+    return list(dict.fromkeys(memory_ids))
 
 
 def _protocol_action_map() -> dict[str, str]:
@@ -586,11 +537,17 @@ def _protocol_action_map() -> dict[str, str]:
     }
 
 
-def _planner_decision(message: AMPMessage, task: str) -> PlannerDecision:
+def _planner_decision(
+    message: AMPMessage,
+    task: str,
+    capability_to_agent: dict[str, str],
+) -> PlannerDecision:
     try:
-        return PlannerDecision.model_validate(message.result.get("decision")).normalized()
+        return PlannerDecision.model_validate(message.result.get("decision")).normalized(
+            capability_to_agent=capability_to_agent
+        )
     except Exception:
-        return PlannerDecision.from_task(task)
+        return PlannerDecision.from_task(task, capability_to_agent=capability_to_agent)
 
 
 def _planner_summary(message: AMPMessage) -> str:

@@ -11,7 +11,7 @@ from agentmesh.chat.session import ChatTurn
 from agentmesh.config import AgentMeshConfig
 from agentmesh.core import rust_available
 from agentmesh.eval.benchmark import run_benchmark
-from agentmesh.eval.compare import run_prompt_compare
+from agentmesh.eval.compare import run_prompt_compare, run_protocol_with_progress
 from agentmesh.eval.report import generate_report
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.maintenance import MemoryMaintenanceConfig, MemoryMaintenanceWorker
@@ -22,6 +22,7 @@ from agentmesh.shell.commands import ParsedShellCommand, join_prompt, parse_shel
 from agentmesh.shell.render import (
     render_benchmark,
     render_compare,
+    render_compare_progress,
     render_config,
     render_help,
     render_memory,
@@ -116,7 +117,7 @@ class ShellSession:
         return True
 
     def _compare(self, args: list[str]) -> None:
-        use_llm = False
+        use_llm = True
         prompt_args: list[str] = []
         for arg in args:
             if arg == "--llm":
@@ -127,9 +128,14 @@ class ShellSession:
                 prompt_args.append(arg)
         prompt = join_prompt(prompt_args)
         if not prompt:
-            self.console.print("[red]Usage:[/red] /compare [--llm] <task>")
+            self.console.print("[red]Usage:[/red] /compare [--no-llm] <task>")
             return
-        summary = run_prompt_compare(prompt, paths=self.paths, use_llm=use_llm)
+        summary = run_prompt_compare(
+            prompt,
+            paths=self.paths,
+            use_llm=use_llm,
+            progress_callback=lambda event: render_compare_progress(self.console, event),
+        )
         render_compare(self.console, summary)
 
     def _ask(self, args: list[str]) -> None:
@@ -138,10 +144,12 @@ class ShellSession:
             self.console.print("[red]Usage:[/red] /ask <message>")
             return
         task_path = self._write_ask_task(message)
-        result = run_protocol_mode(
+        result = run_protocol_with_progress(
             task_path=task_path,
             paths=self.paths,
-            load_configured_llm=True,
+            use_llm=True,
+            progress_callback=lambda event: render_compare_progress(self.console, event),
+            runner=run_protocol_mode,
         )
         turn = ChatTurn(user=message, assistant=result.answer)
         self.history.append(turn)

@@ -1,5 +1,6 @@
 import orjson
 
+from agentmesh.agents.state_refs import first_code_result_text, state_payloads_as_text
 from agentmesh.llm.client import ChatMessage
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
@@ -14,8 +15,18 @@ class SummarizerAgent(BaseAgent):
     def handle(self, message: AMPMessage, context: RuntimeContext) -> AMPMessage:
         llm_summary: str | None = None
         code_result = str(message.params.get("code_result", ""))
+        if not code_result:
+            code_result = first_code_result_text(
+                context=context,
+                state_refs=message.state_refs,
+                consumer=self.name,
+            )
         state_context = message.params.get("state_context")
-        input_text = _state_context_text(state_context) or ", ".join(message.state_refs)
+        input_text = _state_context_text(state_context) or state_payloads_as_text(
+            context=context,
+            state_refs=message.state_refs,
+            consumer=self.name,
+        )
         if code_result:
             input_text = f"{input_text}\n\nCodeAct result:\n{code_result}"
         summary = (

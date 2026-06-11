@@ -16,7 +16,7 @@ def parse_shell_line(line: str) -> ParsedShellCommand | None:
     if not stripped:
         return None
     if not stripped.startswith("/"):
-        return ParsedShellCommand(name="compare", args=[stripped], raw_text=stripped)
+        return ParsedShellCommand(name="ask", args=[stripped], raw_text=stripped)
 
     parts = shlex.split(stripped[1:])
     if not parts:
@@ -26,4 +26,3 @@ def parse_shell_line(line: str) -> ParsedShellCommand | None:
 
 def join_prompt(args: list[str]) -> str:
     return " ".join(args).strip()
-

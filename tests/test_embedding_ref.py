@@ -29,6 +29,18 @@ def test_hash_embedding_is_deterministic_normalized_and_semantic_enough() -> Non
     assert encoder.encode("") == [0.0] * 384
 
 
+def test_hash_embedding_handles_chinese_text() -> None:
+    encoder = HashEmbeddingEncoder(dimensions=384)
+
+    vector = encoder.encode("留学择校问题的考量因素")
+    similar = encoder.encode("留学选校因素和考量")
+    unrelated = encoder.encode("快速排序代码实现")
+
+    assert sum(abs(value) for value in vector) > 0
+    assert abs(sum(value * value for value in vector) - 1.0) < 1e-9
+    assert cosine_similarity(vector, similar) > cosine_similarity(vector, unrelated)
+
+
 def test_embedding_can_be_written_to_state_store(tmp_path: Path) -> None:
     store = StateStore(RuntimePaths(root=tmp_path))
     embedding = HashEmbeddingEncoder().encode("protocol memory")

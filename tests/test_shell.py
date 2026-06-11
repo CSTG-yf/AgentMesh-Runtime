@@ -2,18 +2,21 @@ from io import StringIO
 
 from rich.console import Console
 
+from agentmesh.eval.compare import CompareAgentOutput, CompareSummary
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.shell.commands import parse_shell_line
+from agentmesh.shell.render import render_compare
 from agentmesh.shell.session import ShellSession
+from agentmesh.storage.agent_io import append_protocol_agent_io
 from agentmesh.storage.jsonl import append_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
 
-def test_shell_parser_routes_plain_text_to_compare() -> None:
+def test_shell_parser_routes_plain_text_to_ask() -> None:
     command = parse_shell_line("Analyze agent communication overhead")
 
     assert command is not None
-    assert command.name == "compare"
+    assert command.name == "ask"
     assert command.args == ["Analyze agent communication overhead"]
 
 
@@ -49,6 +52,103 @@ def test_shell_compare_runs_both_modes(tmp_path) -> None:
     rendered = output.getvalue()
     assert "Text Mode vs Protocol Mode" in rendered
     assert "token_saving_rate" in rendered
+
+
+def test_shell_compare_uses_llm_by_default_and_can_disable_it(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=140)
+    session = ShellSession(paths=RuntimePaths(root=tmp_path), console=console)
+    calls: list[bool] = []
+
+    class FakeSummary:
+        task_path = "task.txt"
+        text = ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text",
+            metrics=RunMetrics(message_count=1),
+        )
+        protocol = ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol",
+            metrics=RunMetrics(message_count=1),
+        )
+        text_agent_outputs = []
+        protocol_agent_outputs = []
+        token_saving_rate = 0.0
+        wire_bytes_reduction_rate = 0.0
+        latency_reduction_rate = 0.0
+
+    def fake_summary(prompt, paths, *, use_llm=True, progress_callback=None):
+        del progress_callback
+        calls.append(use_llm)
+        return FakeSummary()
+
+    monkeypatch.setattr("agentmesh.shell.session.run_prompt_compare", fake_summary)
+
+    assert session.handle_line("/compare hello")
+    assert session.handle_line("/compare --no-llm hello")
+
+    assert calls == [True, False]
+
+
+def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=140)
+    summary = CompareSummary(
+        task_path="task.txt",
+        text=ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text final answer",
+            metrics=RunMetrics(message_count=4, estimated_tokens=100, wire_bytes=1000),
+        ),
+        protocol=ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol final answer",
+            metrics=RunMetrics(message_count=20, estimated_tokens=20, wire_bytes=400),
+        ),
+        text_agent_outputs=[
+            CompareAgentOutput(
+                mode="text",
+                trace_id="trace-text",
+                step=1,
+                agent="planner",
+                output="text planner output",
+            )
+        ],
+        protocol_agent_outputs=[
+            CompareAgentOutput(
+                mode="protocol",
+                trace_id="trace-protocol",
+                step=1,
+                agent="planner",
+                action="plan.create",
+                output="protocol planner output",
+                state_refs_in=["state://task"],
+                state_refs_out=["state://plan"],
+            )
+        ],
+        token_saving_rate=0.8,
+        latency_reduction_rate=0.1,
+        wire_bytes_reduction_rate=0.6,
+        memory_hit_rate=0.0,
+    )
+
+    render_compare(console, summary)
+
+    rendered = output.getvalue()
+    assert rendered.index("Final Answers") < rendered.index("Agent Outputs")
+    assert rendered.index("Agent Outputs") < rendered.index("Text Mode vs Protocol Mode")
+    assert "text final answer" in rendered
+    assert "protocol final answer" in rendered
+    assert "text planner output" in rendered
+    assert "protocol planner output" in rendered
 
 
 def test_shell_trace_shows_agent_io_logs(tmp_path) -> None:
@@ -106,6 +206,73 @@ def test_shell_ask_routes_through_protocol_mode(tmp_path, monkeypatch) -> None:
     assert "User: Remember protocol state refs." in str(calls[0]["task_text"])
     assert "protocol answer" in output.getvalue()
     assert session.history[-1].assistant == "protocol answer"
+
+
+def test_shell_ask_streams_protocol_agent_outputs(tmp_path, monkeypatch) -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=140)
+    session = ShellSession(paths=RuntimePaths(root=tmp_path), console=console)
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, load_configured_llm
+        append_protocol_agent_io(
+            paths=paths,
+            trace_id="trace-shell-stream",
+            step=1,
+            source_agent="runtime",
+            agent="planner",
+            action="plan.create",
+            params={"task": "stream ask"},
+            result={"plan": ["streamed planner output"]},
+            state_refs_in=["state://task"],
+            state_refs_out=["state://plan"],
+            result_msg_type="RESULT",
+        )
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-shell-stream",
+            answer="protocol final answer",
+            metrics=RunMetrics(message_count=3),
+        )
+
+    monkeypatch.setattr("agentmesh.shell.session.run_protocol_mode", fake_protocol_mode)
+
+    assert session.handle_line("/ask stream ask")
+
+    rendered = output.getvalue()
+    assert "START Protocol Mode started" in rendered
+    assert "Protocol Mode step 1: planner" in rendered
+    assert "streamed planner output" in rendered
+    assert "DONE Protocol Mode completed" in rendered
+    assert "protocol final answer" in rendered
+    assert rendered.index("Protocol Mode step 1: planner") < rendered.index("protocol final answer")
+
+
+def test_shell_plain_text_routes_through_ask_protocol_mode(tmp_path, monkeypatch) -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=140)
+    session = ShellSession(paths=RuntimePaths(root=tmp_path), console=console)
+    calls: list[str] = []
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del paths
+        assert load_configured_llm is True
+        task_text = task_path.read_text(encoding="utf-8")
+        calls.append(task_text)
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-shell-plain-text",
+            answer="plain text ask answer",
+            metrics=RunMetrics(message_count=3),
+        )
+
+    monkeypatch.setattr("agentmesh.shell.session.run_protocol_mode", fake_protocol_mode)
+
+    assert session.handle_line("直接写一个快速排序并输出排序结果")
+
+    assert len(calls) == 1
+    assert "User: 直接写一个快速排序并输出排序结果" in calls[0]
+    assert "plain text ask answer" in output.getvalue()
 
 
 def test_shell_ask_prints_protocol_answer_without_rich_markup_stripping(

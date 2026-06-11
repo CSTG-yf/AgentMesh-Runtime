@@ -18,7 +18,7 @@ The first version intentionally uses synchronous execution and local storage. Th
 The evaluation compares two communication models on the same task suite:
 
 - Text Mode baseline: agents pass the full accumulated natural-language context to the next agent. Metrics record this as `communication_model="plain_text"` and count `wire_bytes` from full text payloads.
-- Protocol Mode candidate: agents exchange AMP structured messages containing compact `state://...` references. Actual payloads are stored in `StateStore`, and hot-path codec, StateRef parsing, embedding, vector top-k, and sandbox subprocess primitives can use Rust Core when installed.
+- Protocol Mode candidate: agents exchange AMP structured messages containing compact `state://...` references. Actual payloads are stored in `StateStore`; agent `handle()` methods dereference those refs through `StateStore.get(...)` and mark themselves as state consumers. Hot-path codec, StateRef parsing, embedding, vector top-k, and sandbox subprocess primitives can use Rust Core when installed.
 
 Fairness rule: Text Mode must never use Rust Core, typed envelopes, StateRefs, embeddings, shared memory, sandbox execution, or hidden state processing. It is intentionally a plain text handoff chain where each agent forwards its complete text context to the next agent. Rust and structured-state optimizations are only part of Protocol Mode.
 
@@ -39,7 +39,13 @@ Python builds the envelope dictionaries, then calls Rust Core `encode_typed_enve
 
 ## CodeAct Execution
 
-`ExecutorAgent` implements a CodeAct-style tool step. It receives task and evidence summaries, asks the configured LLM to return Python code, extracts fenced or raw code, and falls back to deterministic validation code when no LLM is available. `Protocol Mode` executes the generated code through `SandboxRunner`, writes stdout, stderr, exit code, generated code, and executor metadata into `CodeResultState`, then passes that state to `SummarizerAgent`. The summarizer receives a compact execution summary in `params["code_result"]` and can include the sandbox result in its final answer and memory write.
+`ExecutorAgent` implements a CodeAct-style tool step. It reads the task and evidence from incoming StateRefs, asks the configured LLM to return Python code, extracts fenced or raw code, and falls back to deterministic validation code when no LLM is available. `Protocol Mode` executes the generated code through `SandboxRunner`, writes stdout, stderr, exit code, generated code, and executor metadata into `CodeResultState`, then passes that state to `SummarizerAgent`. The summarizer reads `CodeResultState` by reference and can include the sandbox result in its final answer and memory write.
+
+## Capability Routing And Memory
+
+At startup, default agents emit HELLO and CAPABILITY_ADVERTISE messages. `AgentRegistry.capability_owner_map()` turns those advertisements into a `capability -> agent` map. Planner logic still uses deterministic intent rules, and optionally LLM planner JSON, to decide which capabilities are needed; the final route is normalized through the advertised capability map instead of hard-coded agent names.
+
+`RetrieverAgent` owns memory retrieval. The runtime invokes `memory.semantic_search` with query StateRefs and query tags, then RetrieverAgent reads the referenced query payload, calls `HybridMemoryStore`, filters reusable hits, increments reuse counts, and returns both local/LLM evidence and memory-hit evidence in its AMP result. Protocol Mode consumes that result for evidence state and memory-hit metrics.
 
 ## Rust Core Optimization
 
@@ -65,4 +71,4 @@ The default agents remain deterministic when no `.env` LLM configuration is pres
 - `ExecutorAgent` calls the model for validation and stores that validation in the `CodeResultState`.
 - `SummarizerAgent` calls the model and its response becomes the final answer, final `SummaryState`, and persisted `MemoryUnit` summary.
 
-This keeps the contest comparison intact: Text Mode still represents long-context language passing, while Protocol Mode transfers compact StateRefs whose payloads can be deterministic or LLM-generated.
+This keeps the contest comparison intact: Text Mode still represents long-context language passing, while Protocol Mode transfers compact StateRefs whose payloads can be deterministic or LLM-generated. Both modes may use comparable prompt templates when LLM is enabled; the intended measured advantage is communication/state-passing behavior, not giving one mode a stronger reasoning prompt.

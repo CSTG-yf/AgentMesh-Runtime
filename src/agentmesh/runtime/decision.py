@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 import orjson
@@ -26,7 +27,11 @@ class PlannerDecision(BaseModel):
     reason: str = "rule-based fallback"
 
     @classmethod
-    def from_task(cls, task: str) -> PlannerDecision:
+    def from_task(
+        cls,
+        task: str,
+        capability_to_agent: Mapping[str, str] | None = None,
+    ) -> PlannerDecision:
         lowered = task.lower()
         tool_words = [
             "运行",
@@ -44,6 +49,10 @@ class PlannerDecision(BaseModel):
             "打印",
             "排序",
             "快速排序",
+            "快排",
+            "函数",
+            "用例",
+            "输入输出",
             "benchmark",
             "bench",
             "codeact",
@@ -92,16 +101,23 @@ class PlannerDecision(BaseModel):
             need_tool_execution=need_tool,
             need_summary=True,
             reason="matched tool/retrieval keywords",
-        ).normalized()
+        ).normalized(capability_to_agent=capability_to_agent)
 
     @classmethod
-    def from_llm_or_task(cls, task: str, llm_text: str | None) -> PlannerDecision:
-        fallback = cls.from_task(task)
+    def from_llm_or_task(
+        cls,
+        task: str,
+        llm_text: str | None,
+        capability_to_agent: Mapping[str, str] | None = None,
+    ) -> PlannerDecision:
+        fallback = cls.from_task(task, capability_to_agent=capability_to_agent)
         if not llm_text:
             return fallback
         try:
             loaded: Any = orjson.loads(_json_object_text(llm_text))
-            decision = cls.model_validate(loaded).normalized()
+            decision = cls.model_validate(loaded).normalized(
+                capability_to_agent=capability_to_agent
+            )
         except Exception:
             return fallback
         if not decision.execution_route or not decision.required_capabilities:
@@ -113,11 +129,14 @@ class PlannerDecision(BaseModel):
                     "need_tool_execution": True,
                     "reason": f"{decision.reason}; task keywords require tool execution",
                 }
-            ).normalized()
+            ).normalized(capability_to_agent=capability_to_agent)
         return decision
 
-    def normalized(self) -> PlannerDecision:
-        route = [agent for agent in self.execution_route if agent in _ROUTE_ORDER]
+    def normalized(
+        self,
+        capability_to_agent: Mapping[str, str] | None = None,
+    ) -> PlannerDecision:
+        route = [agent for agent in self.execution_route if isinstance(agent, str) and agent]
         capabilities = [
             capability
             for capability in self.required_capabilities
@@ -136,18 +155,16 @@ class PlannerDecision(BaseModel):
             or "codeact.generate" in capabilities
         )
         need_summary = True if self.need_summary else "summarizer" in route
-        normalized_route = ["planner"]
+        normalized_route = [_agent_for_capability("plan.create", capability_to_agent)]
         if need_retrieval:
-            normalized_route.append("retriever")
+            normalized_route.append(
+                _agent_for_capability("memory.semantic_search", capability_to_agent)
+            )
         if need_tool:
-            normalized_route.append("executor")
+            normalized_route.append(_agent_for_capability("tool.run_python", capability_to_agent))
         if need_summary:
-            normalized_route.append("summarizer")
-        normalized_capabilities = [
-            _CAPABILITY_BY_AGENT[agent]
-            for agent in normalized_route
-            if agent in _CAPABILITY_BY_AGENT
-        ]
+            normalized_route.append(_agent_for_capability("summary.create", capability_to_agent))
+        normalized_capabilities = _capabilities_for_route(normalized_route, capability_to_agent)
         intent = self.intent or ("validation" if need_tool else "analysis")
         if need_tool and intent == "analysis":
             intent = "validation"
@@ -155,12 +172,34 @@ class PlannerDecision(BaseModel):
             update={
                 "intent": intent,
                 "required_capabilities": list(dict.fromkeys(normalized_capabilities)),
-                "execution_route": normalized_route,
+                "execution_route": list(dict.fromkeys(normalized_route)),
                 "need_retrieval": need_retrieval,
                 "need_tool_execution": need_tool,
                 "need_summary": need_summary,
             }
         )
+
+
+def _agent_for_capability(
+    capability: str,
+    capability_to_agent: Mapping[str, str] | None,
+) -> str:
+    if capability_to_agent and capability in capability_to_agent:
+        return capability_to_agent[capability]
+    for agent, agent_capability in _CAPABILITY_BY_AGENT.items():
+        if agent_capability == capability:
+            return agent
+    return capability
+
+
+def _capabilities_for_route(
+    route: list[str],
+    capability_to_agent: Mapping[str, str] | None,
+) -> list[str]:
+    if capability_to_agent:
+        by_agent = {agent: capability for capability, agent in capability_to_agent.items()}
+        return [by_agent[agent] for agent in route if agent in by_agent]
+    return [capability for agent in route if (capability := _CAPABILITY_BY_AGENT.get(agent))]
 
 
 def _json_object_text(content: str) -> str:

@@ -16,6 +16,7 @@ from agentmesh.memory.sqlite_store import SQLiteMemoryStore
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.runtime.registry import RuntimeContext
+from agentmesh.shell.render import render_compare, render_compare_progress
 from agentmesh.shell.session import run_shell
 from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.store import StateStore
@@ -48,9 +49,9 @@ def run(
         bool,
         typer.Option(
             "--llm/--no-llm",
-            help="Allow agents in the selected mode to call the configured LLM.",
+            help="Use the configured LLM by default; pass --no-llm for offline mode.",
         ),
-    ] = False,
+    ] = True,
 ) -> None:
     paths = RuntimePaths(root=root)
     try:
@@ -86,17 +87,22 @@ def compare(
         bool,
         typer.Option(
             "--llm/--no-llm",
-            help="Allow both Text Mode and Protocol Mode agents to call the configured LLM.",
+            help="Use the configured LLM by default; pass --no-llm for offline comparison.",
         ),
-    ] = False,
+    ] = True,
 ) -> None:
     paths = RuntimePaths(root=root)
     try:
-        summary = run_prompt_compare(prompt, paths=paths, use_llm=llm)
+        summary = run_prompt_compare(
+            prompt,
+            paths=paths,
+            use_llm=llm,
+            progress_callback=lambda event: render_compare_progress(console, event),
+        )
     except Exception as exc:
         console.print(f"[red]agentmesh compare failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
-    _print_json(summary.model_dump(mode="json"))
+    render_compare(console, summary)
 
 
 @app.command()

@@ -1,6 +1,7 @@
 import ast
 import re
 
+from agentmesh.agents.state_refs import first_text_payload, state_payloads_as_text
 from agentmesh.llm.client import ChatMessage
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
@@ -15,6 +16,19 @@ class ExecutorAgent(BaseAgent):
     def handle(self, message: AMPMessage, context: RuntimeContext) -> AMPMessage:
         task = str(message.params.get("task", ""))
         evidence = str(message.params.get("evidence", ""))
+        state_text = state_payloads_as_text(
+            context=context,
+            state_refs=message.state_refs,
+            consumer=self.name,
+        )
+        if not task:
+            task = first_text_payload(
+                context=context,
+                state_refs=message.state_refs,
+                consumer=self.name,
+            )
+        if not evidence:
+            evidence = state_text
         code_input = "\n".join(item for item in [task, evidence] if item)
         llm_code: str | None = None
         deterministic_code = _deterministic_task_code(task)
@@ -95,11 +109,12 @@ def _deterministic_code(task: str, evidence: str) -> str:
 
 def _deterministic_task_code(task: str) -> str | None:
     lowered = task.lower()
-    if not any(word in lowered for word in ["快速排序", "排序", "quicksort", "quick sort", "sort"]):
+    if not any(
+        word in lowered
+        for word in ["快速排序", "快排", "排序", "quicksort", "quick sort", "sort"]
+    ):
         return None
-    numbers = _first_numeric_list(task)
-    if numbers is None:
-        return None
+    numbers = _first_numeric_list(task) or [5, 3, 8, 3, 1, 9, -2, 0, 3]
     return (
         "import json\n"
         "\n"

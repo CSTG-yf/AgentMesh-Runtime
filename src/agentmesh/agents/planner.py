@@ -1,3 +1,4 @@
+from agentmesh.agents.state_refs import first_text_payload, read_state_payloads
 from agentmesh.llm.client import ChatMessage
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
@@ -12,6 +13,18 @@ class PlannerAgent(BaseAgent):
 
     def handle(self, message: AMPMessage, context: RuntimeContext) -> AMPMessage:
         task = str(message.params.get("task", ""))
+        if not task:
+            task = first_text_payload(
+                context=context,
+                state_refs=message.state_refs,
+                consumer=self.name,
+            )
+        else:
+            read_state_payloads(
+                context=context,
+                state_refs=message.state_refs,
+                consumer=self.name,
+            )
         if message.action == "plan.refine":
             feedback = message.params.get("tool_feedback", {})
             refined_plan = [
@@ -50,7 +63,11 @@ class PlannerAgent(BaseAgent):
                 )
             except Exception:
                 llm_plan = None
-        decision = PlannerDecision.from_llm_or_task(task, llm_plan)
+        decision = PlannerDecision.from_llm_or_task(
+            task,
+            llm_plan,
+            capability_to_agent=context.capability_to_agent,
+        )
         steps = [
             "identify user intent",
             "select dynamic agent route",

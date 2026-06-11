@@ -1,6 +1,5 @@
 import hashlib
 import math
-import re
 import urllib.error
 import urllib.request
 from typing import Protocol
@@ -23,9 +22,11 @@ class HashEmbeddingEncoder:
         self.dimensions = dimensions
 
     def encode(self, text: str) -> list[float]:
+        tokens = _hash_embedding_tokens(text)
         if rust_available() and hasattr(rust_core(), "hash_embedding"):
-            return [float(value) for value in rust_core().hash_embedding(text, self.dimensions)]
-        tokens = re.findall(r"[a-z0-9]+", text.lower())
+            vector = [float(value) for value in rust_core().hash_embedding(text, self.dimensions)]
+            if any(value != 0.0 for value in vector) or not tokens:
+                return vector
         if not tokens:
             return [0.0] * self.dimensions
         bigrams = [
@@ -43,6 +44,35 @@ class HashEmbeddingEncoder:
         if norm == 0:
             return vector
         return [value / norm for value in vector]
+
+
+def _hash_embedding_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    ascii_buffer: list[str] = []
+
+    def flush_ascii() -> None:
+        if ascii_buffer:
+            tokens.append("".join(ascii_buffer))
+            ascii_buffer.clear()
+
+    for char in text.lower():
+        if char.isascii() and char.isalnum():
+            ascii_buffer.append(char)
+            continue
+        flush_ascii()
+        if _is_cjk(char):
+            tokens.append(char)
+    flush_ascii()
+    return tokens
+
+
+def _is_cjk(char: str) -> bool:
+    codepoint = ord(char)
+    return (
+        0x3400 <= codepoint <= 0x4DBF
+        or 0x4E00 <= codepoint <= 0x9FFF
+        or 0xF900 <= codepoint <= 0xFAFF
+    )
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
