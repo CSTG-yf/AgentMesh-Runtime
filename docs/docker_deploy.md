@@ -38,7 +38,7 @@ docker compose run --rm agentmesh shell
 Compare Text Mode and Protocol Mode on the same prompt:
 
 ```bash
-docker compose run --rm agentmesh compare "写出一个快速排序算法并输出结果数组"
+docker compose run --rm agentmesh compare "写出一个 Python 验证脚本并输出结果"
 ```
 
 Run the reproducible benchmark:

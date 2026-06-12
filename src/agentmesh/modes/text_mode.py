@@ -6,6 +6,8 @@ from uuid import uuid4
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
 from agentmesh.eval.quality import deterministic_quality_score
 from agentmesh.llm.client import ChatMessage, LLMClient, create_llm_client
+from agentmesh.runtime.decision import PlannerDecision
+from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.storage.agent_io import append_text_agent_io
 from agentmesh.storage.jsonl import append_jsonl
@@ -17,9 +19,10 @@ def run_text_mode(
     paths: RuntimePaths,
     llm_client: LLMClient | None = None,
     load_configured_llm: bool = True,
+    trace_id: str | None = None,
 ) -> ModeRunResult:
     paths.ensure()
-    trace_id = f"trace-{uuid4().hex[:12]}"
+    trace_id = trace_id or f"trace-{uuid4().hex[:12]}"
     task = task_path.read_text(encoding="utf-8")
     runtime_context = RuntimeContext.from_paths(
         paths=paths,
@@ -27,6 +30,10 @@ def run_text_mode(
         trace_id=trace_id,
         llm_client=llm_client,
         load_configured_llm=load_configured_llm,
+    )
+    registry = default_registry()
+    runtime_context = runtime_context.model_copy(
+        update={"capability_to_agent": registry.capability_owner_map()}
     )
     if llm_client is None and load_configured_llm:
         runtime_context = runtime_context.model_copy(
@@ -36,8 +43,24 @@ def run_text_mode(
     context = task
     final_response = ""
     text_wire_bytes = 0
-    agents = ["planner", "retriever", "executor", "summarizer"]
-    for index, agent in enumerate(agents):
+    agents: list[str] = ["planner"]
+    selected_agents: list[str] = []
+    index = 0
+    while index < len(agents):
+        agent = agents[index]
+        selected_agents.append(agent)
+        is_planner = agent == "planner" and index == 0
+        response = _text_agent_response(
+            agent=agent,
+            full_context=context,
+            runtime_context=runtime_context,
+        )
+        if is_planner:
+            agents = _text_agent_route(
+                task=task,
+                planner_response=response,
+                runtime_context=runtime_context,
+            )
         target = agents[index + 1] if index + 1 < len(agents) else "runtime"
         text_wire_bytes += len(context.encode("utf-8"))
         append_jsonl(
@@ -48,11 +71,6 @@ def run_text_mode(
                 "target_agent": target,
                 "content": context,
             },
-        )
-        response = _text_agent_response(
-            agent=agent,
-            full_context=context,
-            runtime_context=runtime_context,
         )
         append_text_agent_io(
             paths=paths,
@@ -65,6 +83,7 @@ def run_text_mode(
         )
         final_response = response
         context = f"{context}\n[{agent}] {response}"
+        index += 1
     answer = final_response.strip()
     if not answer:
         answer = "Text Mode answer: " + context.splitlines()[-1]
@@ -78,9 +97,40 @@ def run_text_mode(
         text_wire_bytes=text_wire_bytes,
         latency_ms=latency_ms,
         answer_quality_score=deterministic_quality_score(answer),
+        dynamic_route=selected_agents,
+        selected_agents=list(dict.fromkeys(selected_agents)),
+        skipped_agents=[
+            agent
+            for agent in ["planner", "retriever", "executor", "summarizer"]
+            if agent not in selected_agents
+        ],
     )
     append_jsonl(paths.text_trace, {"trace_id": trace_id, "metrics": metrics.model_dump()})
     return ModeRunResult(mode="text", trace_id=trace_id, answer=answer, metrics=metrics)
+
+
+def _text_agent_route(
+    *,
+    task: str,
+    planner_response: str,
+    runtime_context: RuntimeContext,
+) -> list[str]:
+    decision = PlannerDecision.from_llm_or_task(
+        task,
+        planner_response,
+        capability_to_agent=runtime_context.capability_to_agent,
+    )
+    route = [agent for agent in decision.execution_route if agent]
+    if not route:
+        route = PlannerDecision.from_task(
+            task,
+            capability_to_agent=runtime_context.capability_to_agent,
+        ).execution_route
+    if "planner" not in route:
+        route.insert(0, "planner")
+    if "summarizer" not in route:
+        route.append("summarizer")
+    return list(dict.fromkeys(route))
 
 
 def _text_agent_response(

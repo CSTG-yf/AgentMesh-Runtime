@@ -5,7 +5,7 @@ from rich.console import Console
 from agentmesh.eval.compare import CompareAgentOutput, CompareSummary
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.shell.commands import parse_shell_line
-from agentmesh.shell.render import render_compare
+from agentmesh.shell.render import _aligned_agent_output_rows, render_compare
 from agentmesh.shell.session import ShellSession
 from agentmesh.storage.agent_io import append_protocol_agent_io
 from agentmesh.storage.jsonl import append_jsonl
@@ -21,11 +21,11 @@ def test_shell_parser_routes_plain_text_to_ask() -> None:
 
 
 def test_shell_parser_handles_slash_command_arguments() -> None:
-    command = parse_shell_line('/compare --llm "中文多 Agent 任务"')
+    command = parse_shell_line('/compare --llm "涓枃澶?Agent 浠诲姟"')
 
     assert command is not None
     assert command.name == "compare"
-    assert command.args == ["--llm", "中文多 Agent 任务"]
+    assert command.args == ["--llm", "涓枃澶?Agent 浠诲姟"]
 
 
 def test_shell_help_and_config_do_not_fail(tmp_path) -> None:
@@ -151,6 +151,77 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
     assert "protocol planner output" in rendered
 
 
+def test_render_compare_does_not_ellipsis_long_agent_log_lines() -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=88)
+    long_ref = "state://embedding/state-abcdef1234567890abcdef1234567890"
+    summary = CompareSummary(
+        task_path="task.txt",
+        text=ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text final answer",
+            metrics=RunMetrics(message_count=1),
+        ),
+        protocol=ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol final answer",
+            metrics=RunMetrics(message_count=1),
+        ),
+        text_agent_outputs=[],
+        protocol_agent_outputs=[
+            CompareAgentOutput(
+                mode="protocol",
+                trace_id="trace-protocol",
+                step=1,
+                agent="planner",
+                action="plan.create",
+                input_summary='{"state_refs": ["' + long_ref + '"]}',
+                output='{"state_refs": ["' + long_ref + '"]}',
+                state_refs_in=[long_ref],
+                state_refs_out=[long_ref],
+            )
+        ],
+        token_saving_rate=0.0,
+        latency_reduction_rate=0.0,
+        wire_bytes_reduction_rate=0.0,
+        memory_hit_rate=0.0,
+    )
+
+    render_compare(console, summary)
+
+    rendered = output.getvalue()
+    assert "..." not in rendered
+    assert "state-abcdef123456789" in rendered
+    assert "0abcdef1234567890" in rendered
+
+
+def test_compare_agent_outputs_align_by_agent_when_protocol_skips_steps() -> None:
+    text_outputs = [
+        CompareAgentOutput(mode="text", trace_id="trace-text", step=1, agent="planner"),
+        CompareAgentOutput(mode="text", trace_id="trace-text", step=2, agent="retriever"),
+        CompareAgentOutput(mode="text", trace_id="trace-text", step=3, agent="executor"),
+        CompareAgentOutput(mode="text", trace_id="trace-text", step=4, agent="summarizer"),
+    ]
+    protocol_outputs = [
+        CompareAgentOutput(mode="protocol", trace_id="trace-protocol", step=1, agent="planner"),
+        CompareAgentOutput(mode="protocol", trace_id="trace-protocol", step=2, agent="summarizer"),
+    ]
+
+    rows = _aligned_agent_output_rows(text_outputs, protocol_outputs)
+
+    aligned_agents = [
+        (left.agent if left else None, right.agent if right else None) for left, right in rows
+    ]
+    assert aligned_agents == [
+        ("planner", "planner"),
+        ("retriever", None),
+        ("executor", None),
+        ("summarizer", "summarizer"),
+    ]
+
+
 def test_shell_trace_shows_agent_io_logs(tmp_path) -> None:
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=140)
@@ -268,10 +339,10 @@ def test_shell_plain_text_routes_through_ask_protocol_mode(tmp_path, monkeypatch
 
     monkeypatch.setattr("agentmesh.shell.session.run_protocol_mode", fake_protocol_mode)
 
-    assert session.handle_line("直接写一个快速排序并输出排序结果")
+    assert session.handle_line("directly write python validation code")
 
     assert len(calls) == 1
-    assert "User: 直接写一个快速排序并输出排序结果" in calls[0]
+    assert "User: directly write python validation code" in calls[0]
     assert "plain text ask answer" in output.getvalue()
 
 
@@ -299,7 +370,7 @@ def test_shell_ask_prints_protocol_answer_without_rich_markup_stripping(
 
     monkeypatch.setattr("agentmesh.shell.session.run_protocol_mode", fake_protocol_mode)
 
-    assert session.handle_line("/ask write quicksort")
+    assert session.handle_line("/ask write python code")
 
     rendered = output.getvalue()
     assert "pivot = arr[len(arr) // 2]" in rendered

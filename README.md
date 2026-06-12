@@ -139,7 +139,7 @@ tool route:     PlannerAgent -> RetrieverAgent -> ExecutorAgent -> SummarizerAge
 
 ### CodeAct 和 Sandbox
 
-Executor 在确定性模式下生成可复现 Python 校验代码；启用 LLM 后，会要求模型只返回 Python 代码。`SandboxRunner` 会加一层 Python guard，限制越界文件访问、网络和 subprocess，并支持三种后端：
+Executor 在确定性模式下生成可复现 Python 校验代码；启用 LLM 后，会要求模型只返回 Python 代码。离线 fallback 只做通用任务校验和指标记录，不内置 quicksort 等样例任务答案；如果任务要求写入文件，默认写出 `generated_code.py`。`SandboxRunner` 会加一层 Python guard，限制越界文件访问、网络和 subprocess，并支持三种后端：
 
 - `rust`：安装 Rust Core 后优先使用 Rust subprocess runner。
 - `python`：普通 Python subprocess 回退。

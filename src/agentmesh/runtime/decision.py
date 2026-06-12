@@ -7,7 +7,6 @@ from typing import Any
 import orjson
 from pydantic import BaseModel, Field
 
-_ROUTE_ORDER = ["planner", "retriever", "executor", "summarizer"]
 _CAPABILITY_BY_AGENT = {
     "planner": "plan.create",
     "retriever": "memory.semantic_search",
@@ -32,76 +31,7 @@ class PlannerDecision(BaseModel):
         task: str,
         capability_to_agent: Mapping[str, str] | None = None,
     ) -> PlannerDecision:
-        lowered = task.lower()
-        tool_words = [
-            "运行",
-            "执行",
-            "测试",
-            "验证",
-            "计算",
-            "评测",
-            "跑一次",
-            "写代码",
-            "写一个",
-            "脚本",
-            "代码",
-            "输出结果",
-            "打印",
-            "排序",
-            "快速排序",
-            "快排",
-            "函数",
-            "用例",
-            "输入输出",
-            "benchmark",
-            "bench",
-            "codeact",
-            "run",
-            "execute",
-            "test",
-            "validate",
-            "calculate",
-            "compute",
-            "code",
-            "script",
-            "sort",
-            "quicksort",
-            "quick sort",
-        ]
-        retrieval_words = [
-            "检索",
-            "查找",
-            "历史",
-            "记忆",
-            "证据",
-            "复用",
-            "memory",
-            "evidence",
-            "retrieve",
-            "search",
-        ]
-        summary_only_words = [
-            "总结已有",
-            "只总结",
-            "不需要检索",
-            "summarize existing",
-            "summary only",
-        ]
-        need_tool = _contains_any(lowered, tool_words)
-        need_retrieval = _contains_any(lowered, retrieval_words) or not _contains_any(
-            lowered,
-            summary_only_words,
-        )
-        intent = "validation" if need_tool else "analysis"
-        task_type = "benchmark" if "benchmark" in lowered or "评测" in lowered else "general"
-        return cls(
-            intent=intent,
-            task_type=task_type,
-            need_retrieval=need_retrieval,
-            need_tool_execution=need_tool,
-            need_summary=True,
-            reason="matched tool/retrieval keywords",
-        ).normalized(capability_to_agent=capability_to_agent)
+        return _rule_based_policy(task).normalized(capability_to_agent=capability_to_agent)
 
     @classmethod
     def from_llm_or_task(
@@ -180,6 +110,335 @@ class PlannerDecision(BaseModel):
         )
 
 
+def _rule_based_policy(task: str) -> PlannerDecision:
+    text = re.sub(r"\s+", " ", task.lower()).strip()
+    if not text:
+        return PlannerDecision(
+            intent="clarification",
+            task_type="empty",
+            need_retrieval=False,
+            need_tool_execution=False,
+            reason="empty input; ask for the user's goal",
+        )
+    if _is_direct_conversation(text):
+        return PlannerDecision(
+            intent="conversation",
+            task_type="chat",
+            need_retrieval=False,
+            need_tool_execution=False,
+            reason="direct conversational response",
+        )
+    if _is_memory_management(text):
+        return PlannerDecision(
+            intent="memory",
+            task_type="memory_management",
+            need_retrieval=True,
+            need_tool_execution=False,
+            reason="memory request needs scoped memory context",
+        )
+    if _is_benchmark_or_validation(text):
+        return PlannerDecision(
+            intent="validation",
+            task_type="benchmark",
+            need_retrieval=True,
+            need_tool_execution=True,
+            reason="benchmark or validation needs evidence and executor",
+        )
+    if _is_code_review(text):
+        return PlannerDecision(
+            intent="review",
+            task_type="code_review",
+            need_retrieval=True,
+            need_tool_execution=False,
+            reason="code review needs repository context before findings",
+        )
+    if _is_code_execution(text):
+        return PlannerDecision(
+            intent="validation",
+            task_type="code_execution",
+            need_retrieval=True,
+            need_tool_execution=True,
+            reason="code/run/test/debug request needs executor",
+        )
+    if _is_calculation_or_data_task(text):
+        return PlannerDecision(
+            intent="validation",
+            task_type="calculation",
+            need_retrieval=False,
+            need_tool_execution=True,
+            reason="deterministic calculation should use executor without memory",
+        )
+    if _is_summary_only(text):
+        return PlannerDecision(
+            intent="summarization",
+            task_type="summary_only",
+            need_retrieval=False,
+            need_tool_execution=False,
+            reason="user asked to summarize provided context only",
+        )
+    if _is_retrieval_task(text):
+        return PlannerDecision(
+            intent="retrieval",
+            task_type="knowledge_lookup",
+            need_retrieval=True,
+            need_tool_execution=False,
+            reason="factual or historical query needs retriever grounding",
+        )
+    if _is_report_or_analysis(text):
+        return PlannerDecision(
+            intent="analysis",
+            task_type="analysis_or_report",
+            need_retrieval=True,
+            need_tool_execution=False,
+            reason="analysis/report should gather evidence before summary",
+        )
+    return PlannerDecision(
+        intent="analysis",
+        task_type="general",
+        need_retrieval=True,
+        need_tool_execution=False,
+        reason="general task gets lightweight evidence before summary",
+    )
+
+
+def _is_direct_conversation(text: str) -> bool:
+    direct = _contains_any(
+        text,
+        [
+            "\u4f60\u662f\u8c01",
+            "\u4f60\u662f\u4ec0\u4e48",
+            "\u4ecb\u7ecd\u4e00\u4e0b\u4f60",
+            "\u4f60\u80fd\u505a\u4ec0\u4e48",
+            "\u4f60\u597d",
+            "\u8c22\u8c22",
+            "who are you",
+            "what are you",
+            "introduce yourself",
+            "what can you do",
+            "hello",
+            "hi",
+            "thanks",
+        ],
+    )
+    work_intent = _contains_any(
+        text,
+        [
+            "\u5e2e\u6211",
+            "\u8bf7\u4f60",
+            "\u5b9e\u73b0",
+            "\u4fee\u590d",
+            "\u8c03\u8bd5",
+            "\u6d4b\u8bd5",
+            "\u5206\u6790",
+            "\u68c0\u7d22",
+            "\u62a5\u544a",
+            "\u4ee3\u7801",
+            "help me",
+            "please",
+            "implement",
+            "fix",
+            "debug",
+            "test",
+            "analyze",
+            "search",
+            "report",
+            "code",
+        ],
+    )
+    return direct and not work_intent
+
+
+def _is_memory_management(text: str) -> bool:
+    return _contains_any(
+        text,
+        [
+            "\u8bb0\u4f4f",
+            "\u8bb0\u5fc6",
+            "\u5fd8\u8bb0",
+            "\u5220\u9664\u8bb0\u5fc6",
+            "\u6e05\u9664\u8bb0\u5fc6",
+            "\u4f60\u8fd8\u8bb0\u5f97",
+            "\u5386\u53f2",
+            "\u504f\u597d",
+            "remember",
+            "memory",
+            "forget",
+            "delete memory",
+            "clear memory",
+            "preference",
+        ],
+    )
+
+
+def _is_code_review(text: str) -> bool:
+    return _contains_any(
+        text,
+        [
+            "review",
+            "code review",
+            "pr review",
+            "\u5ba1\u67e5",
+            "\u4ee3\u7801\u5ba1\u67e5",
+            "\u5b89\u5168\u5ba1\u8ba1",
+            "\u6f0f\u6d1e",
+            "\u6027\u80fd\u95ee\u9898",
+            "security audit",
+            "vulnerability",
+            "performance issue",
+        ],
+    )
+
+
+def _is_benchmark_or_validation(text: str) -> bool:
+    return _contains_any(
+        text,
+        [
+            "benchmark",
+            "bench",
+            "\u8bc4\u6d4b",
+            "\u57fa\u51c6",
+            "\u9a8c\u8bc1",
+            "validate",
+            "validation",
+            "verify",
+        ],
+    )
+
+
+def _is_code_execution(text: str) -> bool:
+    return _contains_any(
+        text,
+        [
+            "\u4ee3\u7801",
+            "\u811a\u672c",
+            "\u51fd\u6570",
+            "\u5b9e\u73b0",
+            "\u4fee\u590d",
+            "\u8c03\u8bd5",
+            "\u6d4b\u8bd5",
+            "\u8fd0\u884c",
+            "\u6267\u884c",
+            "\u62a5\u9519",
+            "\u4ed3\u5e93",
+            "\u6587\u4ef6",
+            "\u6392\u5e8f",
+            "\u8f93\u5165\u8f93\u51fa",
+            "\u6253\u5370\u7ed3\u679c",
+            "code",
+            "script",
+            "function",
+            "implement",
+            "fix",
+            "debug",
+            "test",
+            "run",
+            "execute",
+            "error",
+            "repo",
+            "repository",
+            "file",
+            ".py",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".rs",
+            ".go",
+            ".java",
+            "pytest",
+            "npm",
+            "cargo",
+            "uv run",
+            "traceback",
+            "exception",
+            "sort",
+            "print result",
+        ],
+    )
+
+
+def _is_calculation_or_data_task(text: str) -> bool:
+    return _contains_any(
+        text,
+        [
+            "\u8ba1\u7b97",
+            "\u7b97\u4e00\u4e0b",
+            "\u7edf\u8ba1",
+            "\u6392\u5e8f",
+            "\u8868\u683c",
+            "calculate",
+            "compute",
+            "count",
+            "statistics",
+            "sort",
+        ],
+    )
+
+
+def _is_retrieval_task(text: str) -> bool:
+    return _contains_any(
+        text,
+        [
+            "\u68c0\u7d22",
+            "\u67e5\u627e",
+            "\u641c\u7d22",
+            "\u8d44\u6599",
+            "\u6587\u6863",
+            "\u8bc1\u636e",
+            "\u6765\u6e90",
+            "\u5f15\u7528",
+            "\u6700\u65b0",
+            "retrieve",
+            "search",
+            "find",
+            "docs",
+            "document",
+            "evidence",
+            "source",
+            "citation",
+            "latest",
+        ],
+    )
+
+
+def _is_report_or_analysis(text: str) -> bool:
+    return _contains_any(
+        text,
+        [
+            "\u5206\u6790",
+            "\u65b9\u6848",
+            "\u62a5\u544a",
+            "\u603b\u7ed3",
+            "\u5bf9\u6bd4",
+            "\u8bc4\u4f30",
+            "\u8bbe\u8ba1",
+            "\u67b6\u6784",
+            "benchmark",
+            "analyze",
+            "analysis",
+            "report",
+            "compare",
+            "evaluate",
+            "design",
+            "architecture",
+        ],
+    )
+
+
+def _is_summary_only(text: str) -> bool:
+    return _contains_any(
+        text,
+        [
+            "\u53ea\u603b\u7ed3",
+            "\u603b\u7ed3\u5df2\u6709",
+            "\u4e0d\u9700\u8981\u68c0\u7d22",
+            "summary only",
+            "summarize existing",
+            "no retrieval",
+        ],
+    )
+
+
 def _agent_for_capability(
     capability: str,
     capability_to_agent: Mapping[str, str] | None,
@@ -196,10 +455,21 @@ def _capabilities_for_route(
     route: list[str],
     capability_to_agent: Mapping[str, str] | None,
 ) -> list[str]:
-    if capability_to_agent:
-        by_agent = {agent: capability for capability, agent in capability_to_agent.items()}
-        return [by_agent[agent] for agent in route if agent in by_agent]
-    return [capability for agent in route if (capability := _CAPABILITY_BY_AGENT.get(agent))]
+    capabilities: list[str] = []
+    for agent in route:
+        capability = _CAPABILITY_BY_AGENT.get(agent)
+        if capability is None and capability_to_agent:
+            capability = next(
+                (
+                    candidate_capability
+                    for candidate_capability, candidate_agent in capability_to_agent.items()
+                    if candidate_agent == agent
+                ),
+                None,
+            )
+        if capability is not None:
+            capabilities.append(capability)
+    return capabilities
 
 
 def _json_object_text(content: str) -> str:

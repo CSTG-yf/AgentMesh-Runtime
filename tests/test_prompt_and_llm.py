@@ -155,7 +155,7 @@ def test_runtime_context_can_build_llm_client_and_prompt_store(tmp_path: Path) -
 
 def test_text_mode_can_use_llm_with_full_text_handoff(tmp_path: Path) -> None:
     task = tmp_path / "task.txt"
-    task.write_text("Write quicksort in Python.", encoding="utf-8")
+    task.write_text("Write validation code in Python.", encoding="utf-8")
     llm = EchoAgentLLMClient()
 
     result = run_text_mode(
@@ -174,7 +174,7 @@ def test_text_mode_can_use_llm_with_full_text_handoff(tmp_path: Path) -> None:
     ]
     retriever_user = llm.calls[1]["messages"][1].content
     summarizer_user = llm.calls[3]["messages"][1].content
-    assert "Write quicksort in Python." in retriever_user
+    assert "Write validation code in Python." in retriever_user
     assert "[planner] planner model response" in retriever_user
     assert "[retriever] retriever model response" in summarizer_user
     assert "[executor] executor model response" in summarizer_user
@@ -185,7 +185,7 @@ def test_text_mode_can_use_llm_with_full_text_handoff(tmp_path: Path) -> None:
 
 def test_text_mode_preserves_multiline_summarizer_answer(tmp_path: Path) -> None:
     task = tmp_path / "task.txt"
-    task.write_text("Write quicksort in Python.", encoding="utf-8")
+    task.write_text("Write validation code in Python.", encoding="utf-8")
 
     class MultilineSummarizerLLM(EchoAgentLLMClient):
         def complete(
@@ -226,12 +226,12 @@ def test_text_mode_executor_prompt_keeps_code_role_boundary(tmp_path: Path) -> N
     executor_prompt = _text_mode_system_prompt(
         "executor",
         context,
-        "Write quicksort in Python.",
+        "Write validation code in Python.",
     )
     planner_prompt = _text_mode_system_prompt(
         "planner",
         context,
-        "Write quicksort in Python.",
+        "Write validation code in Python.",
     )
 
     assert "ExecutorAgent-specific rule" in executor_prompt
@@ -267,7 +267,7 @@ def test_text_mode_uses_dedicated_llm_timeout_from_config(
         encoding="utf-8",
     )
     task = tmp_path / "task.txt"
-    task.write_text("Write quicksort in Python.", encoding="utf-8")
+    task.write_text("Write validation code in Python.", encoding="utf-8")
 
     run_text_mode(task_path=task, paths=RuntimePaths(root=tmp_path))
 

@@ -22,7 +22,7 @@ def test_planner_reads_task_from_state_ref_when_params_are_empty(tmp_path: Path)
     task_ref = state_store.put_text(
         trace_id=trace_id,
         producer="runtime",
-        text="Write quicksort and output the sorted result.",
+        text="Write Python code that validates a small task.",
     )
     context = RuntimeContext.from_paths(
         paths=paths,
@@ -43,7 +43,7 @@ def test_planner_reads_task_from_state_ref_when_params_are_empty(tmp_path: Path)
         context,
     )
 
-    assert result.result["topic"].startswith("Write quicksort")
+    assert result.result["topic"].startswith("Write Python code")
     assert result.result["decision"]["need_tool_execution"] is True
     record, _ = StateStore(paths).get(task_ref)
     assert "planner" in record.consumers
@@ -63,12 +63,12 @@ def test_retriever_reads_query_ref_and_returns_memory_hits(tmp_path: Path) -> No
     memory_store.put(
         MemoryUnit(
             source_agent="summarizer",
-            task_topic="quicksort prior result",
-            summary="Quick sort previously produced sorted output in a sandbox.",
+            task_topic="code validation prior result",
+            summary="A prior code task produced validation output in a sandbox.",
             tags=["code"],
             evidence_refs=[],
             state_refs=[],
-            embedding_vector=encoder.encode("quicksort sorted output sandbox"),
+            embedding_vector=encoder.encode("code validation output sandbox"),
             confidence=0.9,
             validity_score=0.9,
             provenance_trace_id="trace-memory",
@@ -77,7 +77,7 @@ def test_retriever_reads_query_ref_and_returns_memory_hits(tmp_path: Path) -> No
     query_ref = state_store.put_text(
         trace_id=trace_id,
         producer="runtime",
-        text="Need quicksort sorted output.",
+        text="Need code validation output.",
     )
     result = RetrieverAgent().handle(
         AMPMessage(
@@ -94,7 +94,7 @@ def test_retriever_reads_query_ref_and_returns_memory_hits(tmp_path: Path) -> No
 
     evidence = result.result["evidence"]
     assert any(item.get("memory_id") for item in evidence)
-    assert any(item.get("title") == "quicksort prior result" for item in evidence)
+    assert any(item.get("title") == "code validation prior result" for item in evidence)
     record, _ = StateStore(paths).get(query_ref)
     assert "retriever" in record.consumers
 
@@ -106,7 +106,7 @@ def test_executor_reads_task_from_state_ref_for_codeact(tmp_path: Path) -> None:
     task_ref = state_store.put_text(
         trace_id=trace_id,
         producer="runtime",
-        text="[3,1,2] Write quicksort and output the sorted result.",
+        text="Write Python code that validates a small task.",
     )
     context = RuntimeContext.from_paths(
         paths=paths,
@@ -127,14 +127,14 @@ def test_executor_reads_task_from_state_ref_for_codeact(tmp_path: Path) -> None:
         context,
     )
 
-    assert "data = [3, 1, 2]" in result.result["codeact_code"]
+    assert "'status': 'validated'" in result.result["codeact_code"]
     record, _ = StateStore(paths).get(task_ref)
     assert "executor" in record.consumers
 
 
 def test_protocol_mode_hands_off_task_by_state_ref_not_full_params(tmp_path: Path) -> None:
     task = tmp_path / "task.txt"
-    task_text = "[3,1,2] Write quicksort and output the sorted result."
+    task_text = "Write Python code that validates a small task."
     task.write_text(task_text, encoding="utf-8")
     paths = RuntimePaths(root=tmp_path)
 

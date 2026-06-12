@@ -145,3 +145,107 @@ def test_prompt_compare_streams_and_collects_agent_outputs(
         and event.agent_output.agent == "planner"
         for event in events
     )
+
+
+def test_prompt_compare_progress_only_streams_current_trace(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    events: list[CompareProgressEvent] = []
+
+    def fake_text_mode(
+        task_path: Path,
+        paths: RuntimePaths,
+        llm_client=None,
+        load_configured_llm: bool = True,
+        trace_id: str | None = None,
+    ) -> ModeRunResult:
+        del task_path, llm_client, load_configured_llm
+        current_trace_id = trace_id or "trace-text-current"
+        append_text_agent_io(
+            paths=paths,
+            trace_id="trace-text-foreign",
+            step=1,
+            agent="planner",
+            target_agent="retriever",
+            input_content="foreign task",
+            output_content="foreign text output",
+        )
+        append_text_agent_io(
+            paths=paths,
+            trace_id=current_trace_id,
+            step=1,
+            agent="planner",
+            target_agent="retriever",
+            input_content="task",
+            output_content="current text output",
+        )
+        return ModeRunResult(
+            mode="text",
+            trace_id=current_trace_id,
+            answer="text final answer",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100),
+        )
+
+    def fake_protocol_mode(
+        task_path: Path,
+        paths: RuntimePaths,
+        llm_client=None,
+        load_configured_llm: bool = True,
+        trace_id: str | None = None,
+    ) -> ModeRunResult:
+        del task_path, llm_client, load_configured_llm
+        current_trace_id = trace_id or "trace-protocol-current"
+        append_protocol_agent_io(
+            paths=paths,
+            trace_id="trace-protocol-foreign",
+            step=1,
+            source_agent="runtime",
+            agent="planner",
+            action="plan.create",
+            params={"task": "foreign task"},
+            result={"plan": ["foreign protocol output"]},
+            state_refs_in=["state://foreign-task"],
+            state_refs_out=["state://foreign-plan"],
+            result_msg_type="RESULT",
+        )
+        append_protocol_agent_io(
+            paths=paths,
+            trace_id=current_trace_id,
+            step=1,
+            source_agent="runtime",
+            agent="planner",
+            action="plan.create",
+            params={"task": "task"},
+            result={"plan": ["current protocol output"]},
+            state_refs_in=["state://task"],
+            state_refs_out=["state://plan"],
+            result_msg_type="RESULT",
+        )
+        return ModeRunResult(
+            mode="protocol",
+            trace_id=current_trace_id,
+            answer="protocol final answer",
+            metrics=RunMetrics(estimated_tokens=5, wire_bytes=50),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.compare.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.compare.run_protocol_mode", fake_protocol_mode)
+
+    summary = run_prompt_compare(
+        "hello",
+        RuntimePaths(root=tmp_path),
+        progress_callback=events.append,
+    )
+
+    streamed_outputs = [
+        event.agent_output.output
+        for event in events
+        if event.kind == "agent_output" and event.agent_output is not None
+    ]
+    assert streamed_outputs == [
+        "current text output",
+        '{\n  "plan": [\n    "current protocol output"\n  ]\n}',
+    ]
+    assert [item.output for item in summary.text_agent_outputs] == ["current text output"]
+    assert "current protocol output" in summary.protocol_agent_outputs[0].output

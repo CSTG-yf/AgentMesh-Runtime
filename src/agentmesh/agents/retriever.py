@@ -135,13 +135,13 @@ def _run_memory_search(
 def _derive_tags(text: str) -> list[str]:
     lowered = text.lower()
     tag_terms = {
-        "protocol": ["protocol", "协议"],
-        "state": ["state", "状态"],
-        "memory": ["memory", "记忆"],
-        "benchmark": ["benchmark", "评测", "基准"],
+        "protocol": ["protocol", "\u534f\u8bae"],
+        "state": ["state", "\u72b6\u6001"],
+        "memory": ["memory", "\u8bb0\u5fc6"],
+        "benchmark": ["benchmark", "\u8bc4\u6d4b", "\u57fa\u51c6"],
         "agent": ["agent"],
         "runtime": ["runtime"],
-        "code": ["代码", "脚本", "排序", "快速排序", "快排", "quicksort", "quick sort", "sort"],
+        "code": ["\u4ee3\u7801", "\u811a\u672c", "\u6392\u5e8f", "sort"],
     }
     tags: list[str] = []
     for candidate, terms in tag_terms.items():

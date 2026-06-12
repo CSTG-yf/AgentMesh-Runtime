@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agentmesh.eval.benchmark import run_benchmark
+from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.eval.report import generate_report
 from agentmesh.llm.client import ChatMessage, LLMClient
 from agentmesh.modes.protocol_mode import run_protocol_mode
@@ -24,8 +25,8 @@ class TextModeFailingSummarizerLLM(LLMClient):
             return (
                 "```python\n"
                 "data = [3, 1, 2]\n"
-                "sorted_data = sorted(data)\n"
-                "print(sorted_data)\n"
+                "status = 'validated'\n"
+                "print(status)\n"
                 "```"
             )
         return f"{agent_name} output"
@@ -65,13 +66,11 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert [item["source_agent"] for item in text_messages] == [
         "planner",
         "retriever",
-        "executor",
         "summarizer",
     ]
     assert [item["agent"] for item in text_agent_io] == [
         "planner",
         "retriever",
-        "executor",
         "summarizer",
     ]
     assert text_messages[0]["content"] == task.read_text(encoding="utf-8")
@@ -81,6 +80,8 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert all("state://" not in item["input"]["content"] for item in text_agent_io)
     assert all("state://" not in item["content"] for item in text_messages)
     assert all("typed_envelope" not in item["content"] for item in text_messages)
+    assert text_result.metrics.dynamic_route == ["planner", "retriever", "summarizer"]
+    assert "executor" in text_result.metrics.skipped_agents
     assert protocol_result.mode == "protocol"
     assert protocol_result.metrics.communication_model == "structured_state_ref"
     assert protocol_result.metrics.wire_bytes > 0
@@ -202,6 +203,10 @@ tasks:
     assert "TokenEstimator" in report_text
     assert "TokenSavingRate" in report_text
     assert "WireBytesReductionRate" in report_text
+    assert "MemoryAvgReusedUnitsPerQuery" in report_text
+    assert "MemoryAvgScore" in report_text
+    assert "MemoryAvgSemanticSimilarity" in report_text
+    assert "MemoryAvgTagOverlapScore" in report_text
     assert "FeedbackRoundCount" in report_text
     assert "TransportSendCount" in report_text
     assert "StateShmTransferCount" in report_text
@@ -211,9 +216,124 @@ tasks:
     assert len(read_jsonl(paths.benchmark_detail)) == 20
 
 
+def test_benchmark_disables_configured_llm_for_both_modes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Explain protocol memory reuse.", encoding="utf-8")
+    suite = tmp_path / "suite.yaml"
+    suite.write_text(
+        """
+name: tiny_suite
+tasks:
+  - id: T1
+    group: T
+    topic: protocol memory
+    input_file: task.txt
+""".strip(),
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, bool]] = []
+
+    def fake_text_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths
+        calls.append(("text", load_configured_llm))
+        return ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100),
+        )
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths
+        calls.append(("protocol", load_configured_llm))
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol",
+            metrics=RunMetrics(
+                estimated_tokens=5,
+                wire_bytes=50,
+                memory_query_count=1,
+                memory_query_hit_count=1,
+                memory_hit_count=1,
+                memory_reused_unit_count=2,
+                memory_avg_score=0.6,
+                memory_avg_semantic_similarity=0.4,
+                memory_avg_tag_overlap_score=0.5,
+            ),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol_mode)
+
+    run_benchmark(suite_path=suite, paths=RuntimePaths(root=tmp_path))
+
+    assert calls == [("text", False), ("protocol", False)]
+
+
+def test_benchmark_summarizes_memory_reuse_quality(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Explain protocol memory reuse.", encoding="utf-8")
+    suite = tmp_path / "suite.yaml"
+    suite.write_text(
+        """
+name: memory_quality_suite
+tasks:
+  - id: T1
+    group: T
+    topic: protocol memory
+    input_file: task.txt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def fake_text_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100),
+        )
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol",
+            metrics=RunMetrics(
+                estimated_tokens=5,
+                wire_bytes=50,
+                memory_query_count=1,
+                memory_query_hit_count=1,
+                memory_reused_unit_count=4,
+                memory_avg_score=0.7,
+                memory_avg_semantic_similarity=0.3,
+                memory_avg_tag_overlap_score=0.5,
+            ),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol_mode)
+
+    summary = run_benchmark(suite_path=suite, paths=RuntimePaths(root=tmp_path))
+
+    assert summary.memory_avg_reused_units_per_query == 4.0
+    assert summary.memory_avg_score == 0.7
+    assert summary.memory_avg_semantic_similarity == 0.3
+    assert summary.memory_avg_tag_overlap_score == 0.5
+
+
 def test_text_mode_summarizer_fallback_preserves_executor_output(tmp_path: Path) -> None:
     task = tmp_path / "sort.txt"
-    task.write_text("Write quicksort and output the sorted result.", encoding="utf-8")
+    task.write_text("Write validation code and output the validation result.", encoding="utf-8")
     paths = RuntimePaths(root=tmp_path)
 
     result = run_text_mode(
@@ -223,8 +343,8 @@ def test_text_mode_summarizer_fallback_preserves_executor_output(tmp_path: Path)
     )
 
     assert "summarizer LLM unavailable" in result.answer
-    assert "print(sorted_data)" in result.answer
+    assert "print(status)" in result.answer
     assert result.answer != "processed task with full text context."
     agent_io = read_jsonl(paths.text_agent_io)
     assert agent_io[-1]["agent"] == "summarizer"
-    assert "print(sorted_data)" in agent_io[-1]["output"]["content"]
+    assert "print(status)" in agent_io[-1]["output"]["content"]

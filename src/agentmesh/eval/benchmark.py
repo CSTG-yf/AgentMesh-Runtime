@@ -31,6 +31,10 @@ class BenchmarkSummary(BaseModel):
     latency_reduction_rate: float
     memory_hit_rate: float
     memory_reused_unit_count: int
+    memory_avg_reused_units_per_query: float
+    memory_avg_score: float
+    memory_avg_semantic_similarity: float
+    memory_avg_tag_overlap_score: float
     quality_preservation_rate: float
     rust_core_enabled_runs: int
     rust_sandbox_backend_runs: int
@@ -70,6 +74,9 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
     memory_queries = 0
     memory_query_hits = 0
     memory_reused_units = 0
+    memory_score_weighted_total = 0.0
+    memory_semantic_weighted_total = 0.0
+    memory_tag_overlap_weighted_total = 0.0
     text_quality = 0.0
     protocol_quality = 0.0
     rust_core_enabled_runs = 0
@@ -89,7 +96,11 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
     for _round in range(repeat):
         for task in tasks:
             input_file = paths.root / str(task["input_file"])
-            text_result = run_text_mode(task_path=input_file, paths=paths)
+            text_result = run_text_mode(
+                task_path=input_file,
+                paths=paths,
+                load_configured_llm=False,
+            )
             protocol_result = run_protocol_mode(
                 task_path=input_file,
                 paths=paths,
@@ -118,6 +129,18 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
                 protocol_result.metrics.memory_query_count,
             )
             memory_reused_units += protocol_result.metrics.memory_reused_unit_count
+            memory_score_weighted_total += (
+                protocol_result.metrics.memory_avg_score
+                * protocol_result.metrics.memory_reused_unit_count
+            )
+            memory_semantic_weighted_total += (
+                protocol_result.metrics.memory_avg_semantic_similarity
+                * protocol_result.metrics.memory_reused_unit_count
+            )
+            memory_tag_overlap_weighted_total += (
+                protocol_result.metrics.memory_avg_tag_overlap_score
+                * protocol_result.metrics.memory_reused_unit_count
+            )
             text_quality += text_result.metrics.answer_quality_score
             protocol_quality += protocol_result.metrics.answer_quality_score
             rust_core_enabled_runs += int(protocol_result.metrics.rust_core_enabled)
@@ -168,6 +191,24 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
         latency_reduction_rate=_rate(text_latency, protocol_latency),
         memory_hit_rate=memory_query_hits / memory_queries if memory_queries else 0.0,
         memory_reused_unit_count=memory_reused_units,
+        memory_avg_reused_units_per_query=(
+            memory_reused_units / memory_queries if memory_queries else 0.0
+        ),
+        memory_avg_score=(
+            memory_score_weighted_total / memory_reused_units
+            if memory_reused_units
+            else 0.0
+        ),
+        memory_avg_semantic_similarity=(
+            memory_semantic_weighted_total / memory_reused_units
+            if memory_reused_units
+            else 0.0
+        ),
+        memory_avg_tag_overlap_score=(
+            memory_tag_overlap_weighted_total / memory_reused_units
+            if memory_reused_units
+            else 0.0
+        ),
         quality_preservation_rate=protocol_quality / text_quality if text_quality else 0.0,
         rust_core_enabled_runs=rust_core_enabled_runs,
         rust_sandbox_backend_runs=rust_sandbox_backend_runs,

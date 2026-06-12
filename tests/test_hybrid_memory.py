@@ -75,3 +75,18 @@ def test_protocol_mode_reuses_global_memory_across_runtime_paths(tmp_path: Path)
     second = run_protocol_mode(second_task, second_paths)
 
     assert second.metrics.memory_hit_count == 1
+
+
+def test_protocol_mode_records_generic_code_task_memory(tmp_path: Path) -> None:
+    task = tmp_path / "code_task.txt"
+    task.write_text(
+        "Write Python code that validates a small task.",
+        encoding="utf-8",
+    )
+    paths = RuntimePaths(root=tmp_path)
+
+    result = run_protocol_mode(task, paths, load_configured_llm=False)
+
+    assert "executor" in result.metrics.selected_agents
+    assert result.metrics.memory_query_count == 1
+    assert paths.memory_db.exists()

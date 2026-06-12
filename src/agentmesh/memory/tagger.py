@@ -25,10 +25,20 @@ class RuleBasedMemoryTagger:
             "protocol": ["protocol", "amp", "structured"],
             "state": ["state", "stateref", "embedding", "vector"],
             "memory": ["memory", "reuse", "archive", "retrieval"],
-            "benchmark": ["benchmark", "metric", "evaluate", "评测", "指标"],
+            "benchmark": ["benchmark", "metric", "evaluate", "\u8bc4\u6d4b", "\u6307\u6807"],
             "agent": ["agent", "multi-agent", "planner", "retriever"],
             "runtime": ["runtime", "rust", "ipc", "sandbox", "codeact"],
-            "chinese": ["中文", "汉语", "chinese"],
+            "code": [
+                "code",
+                "script",
+                "sandbox",
+                "codeact",
+                "sort",
+                "\u4ee3\u7801",
+                "\u811a\u672c",
+                "\u6392\u5e8f",
+            ],
+            "chinese": ["\u4e2d\u6587", "\u6c49\u8bed", "chinese"],
         }
         for tag, needles in candidates.items():
             if any(needle in text for needle in needles):
@@ -97,7 +107,11 @@ def _classification_from_json(content: str, fallback: MemoryClassification) -> M
     merged.update({key: value for key, value in loaded.items() if value is not None})
     if not isinstance(merged.get("tags"), list):
         merged["tags"] = fallback.tags
-    merged["tags"] = [str(tag)[:40] for tag in merged["tags"]][:8]
+    merged["tags"] = list(
+        dict.fromkeys(
+            [str(tag)[:40] for tag in [*fallback.tags, *merged["tags"]] if str(tag).strip()]
+        )
+    )[:8]
     try:
         merged["importance_score"] = max(0.0, min(1.0, float(merged["importance_score"])))
     except Exception:

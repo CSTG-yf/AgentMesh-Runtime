@@ -1,6 +1,3 @@
-import ast
-import re
-
 from agentmesh.agents.state_refs import first_text_payload, state_payloads_as_text
 from agentmesh.llm.client import ChatMessage
 from agentmesh.protocol.enums import MsgType
@@ -31,8 +28,7 @@ class ExecutorAgent(BaseAgent):
             evidence = state_text
         code_input = "\n".join(item for item in [task, evidence] if item)
         llm_code: str | None = None
-        deterministic_code = _deterministic_task_code(task)
-        if deterministic_code is None and context.llm_client is not None:
+        if context.llm_client is not None:
             try:
                 llm_code = context.llm_client.complete(
                     agent_name=self.name,
@@ -52,10 +48,8 @@ class ExecutorAgent(BaseAgent):
                 )
             except Exception:
                 llm_code = None
-        code = deterministic_code or _extract_python_code(llm_code) or _deterministic_code(
-            task,
-            evidence,
-        )
+        code = _extract_python_code(llm_code) or _deterministic_code(task, evidence)
+        generated_files = _generated_files_for_task(task, evidence, code)
         return AMPMessage(
             trace_id=context.trace_id,
             source_agent=self.name,
@@ -67,6 +61,7 @@ class ExecutorAgent(BaseAgent):
                 "state_refs_consumed": message.state_refs,
                 "codeact_code": code,
                 "llm_generated_code": llm_code is not None,
+                "generated_files": generated_files,
             },
             state_refs=message.state_refs,
         )
@@ -107,49 +102,34 @@ def _deterministic_code(task: str, evidence: str) -> str:
     )
 
 
-def _deterministic_task_code(task: str) -> str | None:
-    lowered = task.lower()
-    if not any(
-        word in lowered
-        for word in ["快速排序", "快排", "排序", "quicksort", "quick sort", "sort"]
-    ):
-        return None
-    numbers = _first_numeric_list(task) or [5, 3, 8, 3, 1, 9, -2, 0, 3]
-    return (
-        "import json\n"
-        "\n"
-        "def quick_sort(arr):\n"
-        "    if len(arr) <= 1:\n"
-        "        return arr\n"
-        "    pivot = arr[len(arr) // 2]\n"
-        "    left = [x for x in arr if x < pivot]\n"
-        "    middle = [x for x in arr if x == pivot]\n"
-        "    right = [x for x in arr if x > pivot]\n"
-        "    return quick_sort(left) + middle + quick_sort(right)\n"
-        "\n"
-        f"data = {numbers!r}\n"
-        "sorted_data = quick_sort(data)\n"
-        "result = {\n"
-        "    'algorithm': 'quick_sort',\n"
-        "    'input': data,\n"
-        "    'sorted': sorted_data,\n"
-        "    'validated_claims': ['quick_sort executed in sandbox'],\n"
-        "    'failed_claims': [],\n"
-        "    'evidence_gaps': [],\n"
-        "    'recommended_next_actions': [],\n"
-        "}\n"
-        "print(json.dumps(result, ensure_ascii=False, sort_keys=True))\n"
-    )
+def _generated_files_for_task(task: str, evidence: str, code: str) -> list[dict[str, str]]:
+    combined = f"{task}\n{evidence}\n{code}".lower()
+    wants_file = _mentions_file_creation(combined)
+    if wants_file and code.strip():
+        return [
+            {
+                "path": "generated_code.py",
+                "content": code,
+                "language": "python",
+            }
+        ]
+    return []
 
 
-def _first_numeric_list(text: str) -> list[int | float] | None:
-    for match in re.finditer(r"\[[^\[\]]+\]", text):
-        try:
-            loaded = ast.literal_eval(match.group(0))
-        except Exception:
-            continue
-        if not isinstance(loaded, list) or not loaded:
-            continue
-        if all(isinstance(item, int | float) and not isinstance(item, bool) for item in loaded):
-            return loaded
-    return None
+def _mentions_file_creation(text: str) -> bool:
+    terms = [
+        "\u521b\u5efa",
+        "\u4fdd\u5b58",
+        "\u5199\u5165",
+        "\u6587\u4ef6",
+        ".py",
+        "create",
+        "save",
+        "write",
+        "file",
+    ]
+    return _contains_any_text(text, terms)
+
+
+def _contains_any_text(text: str, terms: list[str]) -> bool:
+    return any(term in text for term in terms)

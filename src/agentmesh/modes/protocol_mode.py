@@ -1,3 +1,4 @@
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -36,12 +37,14 @@ def run_protocol_mode(
     paths: RuntimePaths,
     llm_client: LLMClient | None = None,
     load_configured_llm: bool = True,
+    trace_id: str | None = None,
 ) -> ModeRunResult:
     return ProtocolRunSession(
         task_path=task_path,
         paths=paths,
         llm_client=llm_client,
         load_configured_llm=load_configured_llm,
+        trace_id=trace_id,
     ).run()
 
 
@@ -53,11 +56,13 @@ class ProtocolRunSession:
         paths: RuntimePaths,
         llm_client: LLMClient | None,
         load_configured_llm: bool,
+        trace_id: str | None,
     ) -> None:
         self.task_path = task_path
         self.paths = paths
         self.llm_client = llm_client
         self.load_configured_llm = load_configured_llm
+        self.trace_id = trace_id
 
     def run(self) -> ModeRunResult:
         return _run_protocol_mode_impl(
@@ -65,6 +70,7 @@ class ProtocolRunSession:
             paths=self.paths,
             llm_client=self.llm_client,
             load_configured_llm=self.load_configured_llm,
+            trace_id=self.trace_id,
         )
 
 
@@ -73,9 +79,10 @@ def _run_protocol_mode_impl(
     paths: RuntimePaths,
     llm_client: LLMClient | None = None,
     load_configured_llm: bool = True,
+    trace_id: str | None = None,
 ) -> ModeRunResult:
     paths.ensure()
-    trace_id = f"trace-{uuid4().hex[:12]}"
+    trace_id = trace_id or f"trace-{uuid4().hex[:12]}"
     task = task_path.read_text(encoding="utf-8")
     start = time.perf_counter()
     stage_latency_ms: dict[str, int] = {}
@@ -178,6 +185,7 @@ def _run_protocol_mode_impl(
     )
     decision = _planner_decision(planner_result, task, context.capability_to_agent)
     plan_summary = _planner_summary(planner_result)
+    planner_direct_answer = _planner_direct_answer(planner_result, decision)
     plan_ref = state_store.put_summary(
         trace_id=trace_id,
         producer="planner",
@@ -274,7 +282,12 @@ def _run_protocol_mode_impl(
         tool_feedback = _tool_feedback(task, sandbox_result.model_dump())
         tool_feedback_count = 1
         code_result_payload = sandbox_result.model_dump()
+        generated_file_writes = _write_generated_files(
+            root=paths.root,
+            files=executor_result.result.get("generated_files"),
+        )
         code_result_payload["executor_result"] = executor_result.result
+        code_result_payload["generated_files"] = generated_file_writes
         code_result_payload["tool_feedback"] = tool_feedback
         code_result_payload["codeact"] = {
             "code": codeact_code,
@@ -389,7 +402,7 @@ def _run_protocol_mode_impl(
         state_refs=summary_state_refs,
     )
     model_summary = _non_empty_text(summarizer_result.result.get("llm_summary"))
-    summary_text = model_summary or (
+    summary_text = model_summary or planner_direct_answer or (
         _fallback_summary(
             evidence_count=len(evidence),
             route=scheduler.selected_agents,
@@ -467,6 +480,7 @@ def _run_protocol_mode_impl(
     state_records = state_store.list_by_trace(trace_id)
     state_transfer_bytes = sum(record.size_bytes for record in state_records)
     transport_stats = scheduler.transport_metrics()
+    memory_quality = _memory_quality_from_evidence(evidence)
     mark_stage("artifact_write", stage_start)
     latency_ms = int((time.perf_counter() - start) * 1000)
     metrics = RunMetrics(
@@ -497,6 +511,9 @@ def _run_protocol_mode_impl(
         memory_hit_count=1 if memory_hits else 0,
         memory_query_hit_count=1 if memory_hits else 0,
         memory_reused_unit_count=len(memory_hits),
+        memory_avg_score=memory_quality["avg_score"],
+        memory_avg_semantic_similarity=memory_quality["avg_semantic_similarity"],
+        memory_avg_tag_overlap_score=memory_quality["avg_tag_overlap_score"],
         latency_ms=latency_ms,
         stage_latency_ms=stage_latency_ms,
         answer_quality_score=deterministic_quality_score(summary_text),
@@ -524,6 +541,33 @@ def _memory_units_from_evidence(evidence: list[dict[str, Any]]) -> list[str]:
         if isinstance(memory_id, str) and memory_id:
             memory_ids.append(memory_id)
     return list(dict.fromkeys(memory_ids))
+
+
+def _memory_quality_from_evidence(evidence: list[dict[str, Any]]) -> dict[str, float]:
+    memory_items = [item for item in evidence if item.get("memory_id")]
+    if not memory_items:
+        return {
+            "avg_score": 0.0,
+            "avg_semantic_similarity": 0.0,
+            "avg_tag_overlap_score": 0.0,
+        }
+    return {
+        "avg_score": _avg_float(memory_items, "memory_score"),
+        "avg_semantic_similarity": _avg_float(memory_items, "semantic_similarity"),
+        "avg_tag_overlap_score": _avg_float(memory_items, "tag_overlap_score"),
+    }
+
+
+def _avg_float(items: list[dict[str, Any]], key: str) -> float:
+    values: list[float] = []
+    for item in items:
+        try:
+            values.append(float(item.get(key, 0.0)))
+        except (TypeError, ValueError):
+            continue
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
 
 
 def _protocol_action_map() -> dict[str, str]:
@@ -561,6 +605,23 @@ def _planner_summary(message: AMPMessage) -> str:
     if not deterministic_plan:
         return llm_plan
     return f"{deterministic_plan}\n\nLLM plan:\n{llm_plan}"
+
+
+def _planner_direct_answer(message: AMPMessage, decision: PlannerDecision) -> str | None:
+    if decision.need_retrieval or decision.need_tool_execution:
+        return None
+    llm_plan = _non_empty_text(message.result.get("llm_plan"))
+    if llm_plan is None:
+        return None
+    match = re.search(
+        r"(?:^|\n)#{0,6}\s*(?:Final Answer|最终回答|最终答案)\s*:?\s*(.+)",
+        llm_plan,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match is None:
+        return None
+    answer = re.split(r"\n#{1,6}\s+\S+", match.group(1).strip(), maxsplit=1)[0].strip()
+    return answer or None
 
 
 def _tool_feedback(task: str, sandbox_payload: dict[str, Any]) -> dict[str, Any]:
@@ -703,11 +764,73 @@ def _code_result_summary(payload: dict[str, Any]) -> str:
     stdout = str(codeact.get("stdout", "")).strip()
     stderr = str(codeact.get("stderr", "")).strip()
     exit_code = codeact.get("exit_code")
+    generated_files = payload.get("generated_files")
+    file_text = ""
+    if isinstance(generated_files, list) and generated_files:
+        paths = [
+            str(item.get("path"))
+            for item in generated_files
+            if isinstance(item, dict) and item.get("path")
+        ]
+        if paths:
+            file_text = f"; generated_files={', '.join(paths)}"
     return (
         f"sandbox exit {exit_code}; "
         f"stdout={stdout[:500] or '<empty>'}; "
         f"stderr={stderr[:300] or '<empty>'}"
+        f"{file_text}"
     )
+
+
+def _write_generated_files(*, root: Path, files: object) -> list[dict[str, object]]:
+    if not isinstance(files, list):
+        return []
+    root_resolved = root.resolve()
+    written: list[dict[str, object]] = []
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        raw_path = item.get("path")
+        content = item.get("content")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            continue
+        if not isinstance(content, str):
+            continue
+        relative_path = Path(raw_path)
+        if relative_path.is_absolute() or any(part == ".." for part in relative_path.parts):
+            written.append(
+                {
+                    "path": raw_path,
+                    "written": False,
+                    "error": "generated file path must stay inside workspace",
+                }
+            )
+            continue
+        target = (root_resolved / relative_path).resolve()
+        try:
+            target.relative_to(root_resolved)
+        except ValueError:
+            written.append(
+                {
+                    "path": raw_path,
+                    "written": False,
+                    "error": "generated file path escaped workspace",
+                }
+            )
+            continue
+        existed = target.exists()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        written.append(
+            {
+                "path": str(target),
+                "relative_path": str(target.relative_to(root_resolved)),
+                "written": True,
+                "overwritten": existed,
+                "bytes": len(content.encode("utf-8")),
+            }
+        )
+    return written
 
 
 def _fallback_summary(

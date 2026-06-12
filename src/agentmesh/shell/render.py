@@ -12,6 +12,8 @@ from agentmesh.eval.benchmark import BenchmarkSummary
 from agentmesh.eval.compare import CompareAgentOutput, CompareProgressEvent, CompareSummary
 from agentmesh.memory.schema import MemoryUnit
 
+_AGENT_DISPLAY_ORDER = ["planner", "retriever", "executor", "summarizer"]
+
 
 def render_help(console: Console) -> None:
     table = Table(title="AgentMesh shell commands")
@@ -38,32 +40,24 @@ def render_help(console: Console) -> None:
 def render_compare(console: Console, summary: CompareSummary) -> None:
     console.print(f"Task file: {summary.task_path}")
     answers = Table(title="Final Answers", expand=True, show_lines=True)
-    answers.add_column("Text Mode", ratio=1)
-    answers.add_column("Protocol Mode", ratio=1)
+    answers.add_column("Text Mode", ratio=1, overflow="fold")
+    answers.add_column("Protocol Mode", ratio=1, overflow="fold")
     answers.add_row(
-        Text(_clip(summary.text.answer, 6000)),
-        Text(_clip(summary.protocol.answer, 6000)),
+        Text(_clip(summary.text.answer, 6000), overflow="fold"),
+        Text(_clip(summary.protocol.answer, 6000), overflow="fold"),
     )
     console.print(answers)
 
     outputs = Table(title="Agent Outputs", expand=True, show_lines=True)
-    outputs.add_column("Text Mode agents", ratio=1)
-    outputs.add_column("Protocol Mode agents", ratio=1)
-    max_rows = max(len(summary.text_agent_outputs), len(summary.protocol_agent_outputs), 1)
-    for index in range(max_rows):
-        text_output = (
-            summary.text_agent_outputs[index]
-            if index < len(summary.text_agent_outputs)
-            else None
-        )
-        protocol_output = (
-            summary.protocol_agent_outputs[index]
-            if index < len(summary.protocol_agent_outputs)
-            else None
-        )
+    outputs.add_column("Text Mode agents", ratio=1, overflow="fold")
+    outputs.add_column("Protocol Mode agents", ratio=1, overflow="fold")
+    for text_output, protocol_output in _aligned_agent_output_rows(
+        summary.text_agent_outputs,
+        summary.protocol_agent_outputs,
+    ):
         outputs.add_row(
-            Text(_format_agent_output(text_output)),
-            Text(_format_agent_output(protocol_output)),
+            Text(_format_agent_output(text_output), overflow="fold"),
+            Text(_format_agent_output(protocol_output), overflow="fold"),
         )
     console.print(outputs)
 
@@ -190,6 +184,43 @@ def _format_agent_output(
     lines.append("output:")
     lines.append(_clip(output.output, 4000))
     return "\n".join(lines)
+
+
+def _aligned_agent_output_rows(
+    text_outputs: list[CompareAgentOutput],
+    protocol_outputs: list[CompareAgentOutput],
+) -> list[tuple[CompareAgentOutput | None, CompareAgentOutput | None]]:
+    text_by_agent = _outputs_by_agent(text_outputs)
+    protocol_by_agent = _outputs_by_agent(protocol_outputs)
+    ordered_agents = list(_AGENT_DISPLAY_ORDER)
+    for output in [*text_outputs, *protocol_outputs]:
+        if output.agent not in ordered_agents:
+            ordered_agents.append(output.agent)
+
+    rows: list[tuple[CompareAgentOutput | None, CompareAgentOutput | None]] = []
+    for agent in ordered_agents:
+        text_items = text_by_agent.get(agent, [])
+        protocol_items = protocol_by_agent.get(agent, [])
+        count = max(len(text_items), len(protocol_items))
+        for index in range(count):
+            rows.append(
+                (
+                    text_items[index] if index < len(text_items) else None,
+                    protocol_items[index] if index < len(protocol_items) else None,
+                )
+            )
+    if not rows:
+        rows.append((None, None))
+    return rows
+
+
+def _outputs_by_agent(
+    outputs: list[CompareAgentOutput],
+) -> dict[str, list[CompareAgentOutput]]:
+    grouped: dict[str, list[CompareAgentOutput]] = {}
+    for output in sorted(outputs, key=lambda item: item.step):
+        grouped.setdefault(output.agent, []).append(output)
+    return grouped
 
 
 def _clip(value: str, limit: int) -> str:

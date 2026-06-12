@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from inspect import signature
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -97,6 +98,8 @@ def _run_modes_with_progress(
 ) -> tuple[ModeRunResult, ModeRunResult]:
     text_offset = len(read_jsonl(paths.text_agent_io))
     protocol_offset = len(read_jsonl(paths.protocol_agent_io))
+    text_trace_id = f"trace-compare-text-{uuid4().hex[:12]}"
+    protocol_trace_id = f"trace-compare-protocol-{uuid4().hex[:12]}"
     progress_callback(
         CompareProgressEvent(kind="mode_start", mode="text", message="Text Mode started")
     )
@@ -112,15 +115,29 @@ def _run_modes_with_progress(
     with ThreadPoolExecutor(max_workers=2) as executor:
         text_future = executor.submit(
             run_text_mode,
-            task_path=task_path,
-            paths=paths,
-            load_configured_llm=use_llm,
+            **_runner_kwargs(
+                run_text_mode,
+                task_path=task_path,
+                paths=paths,
+                load_configured_llm=use_llm,
+                trace_id=text_trace_id,
+            ),
         )
         protocol_future = executor.submit(
             run_protocol_mode,
-            task_path=task_path,
-            paths=paths,
-            load_configured_llm=use_llm,
+            **_runner_kwargs(
+                run_protocol_mode,
+                task_path=task_path,
+                paths=paths,
+                load_configured_llm=use_llm,
+                trace_id=protocol_trace_id,
+            ),
+        )
+        expected_text_trace_id = (
+            text_trace_id if _accepts_kwarg(run_text_mode, "trace_id") else None
+        )
+        expected_protocol_trace_id = (
+            protocol_trace_id if _accepts_kwarg(run_protocol_mode, "trace_id") else None
         )
         futures: dict[Future[ModeRunResult], Literal["text", "protocol"]] = {
             text_future: "text",
@@ -131,6 +148,8 @@ def _run_modes_with_progress(
                 paths=paths,
                 text_offset=text_offset,
                 protocol_offset=protocol_offset,
+                text_trace_id=expected_text_trace_id,
+                protocol_trace_id=expected_protocol_trace_id,
                 progress_callback=progress_callback,
             )
             done, _ = wait(list(futures), timeout=0.1, return_when=FIRST_COMPLETED)
@@ -139,6 +158,8 @@ def _run_modes_with_progress(
                     paths=paths,
                     text_offset=text_offset,
                     protocol_offset=protocol_offset,
+                    text_trace_id=expected_text_trace_id,
+                    protocol_trace_id=expected_protocol_trace_id,
                     progress_callback=progress_callback,
                 )
             for future in done:
@@ -155,6 +176,8 @@ def _run_modes_with_progress(
             paths=paths,
             text_offset=text_offset,
             protocol_offset=protocol_offset,
+            text_trace_id=expected_text_trace_id,
+            protocol_trace_id=expected_protocol_trace_id,
             progress_callback=progress_callback,
         )
     return results["text"], results["protocol"]
@@ -169,6 +192,8 @@ def run_protocol_with_progress(
     runner: Callable[..., ModeRunResult] = run_protocol_mode,
 ) -> ModeRunResult:
     protocol_offset = len(read_jsonl(paths.protocol_agent_io))
+    trace_id = f"trace-ask-protocol-{uuid4().hex[:12]}"
+    expected_trace_id = trace_id if _accepts_kwarg(runner, "trace_id") else None
     progress_callback(
         CompareProgressEvent(
             kind="mode_start",
@@ -179,14 +204,19 @@ def run_protocol_with_progress(
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
             runner,
-            task_path=task_path,
-            paths=paths,
-            load_configured_llm=use_llm,
+            **_runner_kwargs(
+                runner,
+                task_path=task_path,
+                paths=paths,
+                load_configured_llm=use_llm,
+                trace_id=trace_id,
+            ),
         )
         while True:
             protocol_offset = _emit_new_protocol_outputs(
                 paths=paths,
                 protocol_offset=protocol_offset,
+                trace_id=expected_trace_id,
                 progress_callback=progress_callback,
             )
             done, _ = wait([future], timeout=0.1, return_when=FIRST_COMPLETED)
@@ -195,6 +225,7 @@ def run_protocol_with_progress(
             protocol_offset = _emit_new_protocol_outputs(
                 paths=paths,
                 protocol_offset=protocol_offset,
+                trace_id=expected_trace_id,
                 progress_callback=progress_callback,
             )
             result = future.result()
@@ -250,11 +281,15 @@ def _emit_new_agent_outputs(
     paths: RuntimePaths,
     text_offset: int,
     protocol_offset: int,
+    text_trace_id: str | None = None,
+    protocol_trace_id: str | None = None,
     progress_callback: ProgressCallback,
 ) -> tuple[int, int]:
     text_rows = read_jsonl(paths.text_agent_io)
     protocol_rows = read_jsonl(paths.protocol_agent_io)
     for row in text_rows[text_offset:]:
+        if text_trace_id is not None and str(row.get("trace_id", "")) != text_trace_id:
+            continue
         output = _agent_output_from_text_row(row)
         if output is not None:
             progress_callback(
@@ -266,6 +301,8 @@ def _emit_new_agent_outputs(
                 )
             )
     for row in protocol_rows[protocol_offset:]:
+        if protocol_trace_id is not None and str(row.get("trace_id", "")) != protocol_trace_id:
+            continue
         output = _agent_output_from_protocol_row(row)
         if output is not None:
             progress_callback(
@@ -283,10 +320,13 @@ def _emit_new_protocol_outputs(
     *,
     paths: RuntimePaths,
     protocol_offset: int,
+    trace_id: str | None = None,
     progress_callback: ProgressCallback,
 ) -> int:
     protocol_rows = read_jsonl(paths.protocol_agent_io)
     for row in protocol_rows[protocol_offset:]:
+        if trace_id is not None and str(row.get("trace_id", "")) != trace_id:
+            continue
         output = _agent_output_from_protocol_row(row)
         if output is not None:
             progress_callback(
@@ -378,3 +418,22 @@ def _int_value(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _runner_kwargs(
+    runner: Callable[..., ModeRunResult],
+    **kwargs: Any,
+) -> dict[str, Any]:
+    if _accepts_kwarg(runner, "trace_id"):
+        return kwargs
+    return {key: value for key, value in kwargs.items() if key != "trace_id"}
+
+
+def _accepts_kwarg(runner: Callable[..., ModeRunResult], name: str) -> bool:
+    try:
+        parameters = signature(runner).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in parameters or any(
+        parameter.kind == parameter.VAR_KEYWORD for parameter in parameters.values()
+    )

@@ -34,7 +34,7 @@ def test_hash_embedding_handles_chinese_text() -> None:
 
     vector = encoder.encode("留学择校问题的考量因素")
     similar = encoder.encode("留学选校因素和考量")
-    unrelated = encoder.encode("快速排序代码实现")
+    unrelated = encoder.encode("图搜索代码实现")
 
     assert sum(abs(value) for value in vector) > 0
     assert abs(sum(value * value for value in vector) - 1.0) < 1e-9

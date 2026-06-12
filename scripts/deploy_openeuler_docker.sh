@@ -27,7 +27,7 @@ docker compose up -d tei-embedding
 echo "AgentMesh Docker deployment is ready."
 echo
 echo "Try:"
-echo "  docker compose run --rm agentmesh compare \"写出一个快速排序算法并输出结果数组\""
+echo "  docker compose run --rm agentmesh compare \"写出一个 Python 验证脚本并输出结果\""
 echo "  docker compose run --rm agentmesh benchmark --suite examples/benchmarks/continuous_tasks.yaml"
 echo "  docker compose run --rm agentmesh report --run runs/latest"
 echo "  docker compose run --rm agentmesh shell"

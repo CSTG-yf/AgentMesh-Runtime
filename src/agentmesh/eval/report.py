@@ -36,6 +36,13 @@ def generate_report(paths: RuntimePaths) -> Path:
         f"- LatencyReductionRate: {summary.get('latency_reduction_rate', '0')}",
         f"- MemoryHitRate: {summary.get('memory_hit_rate', '0')}",
         f"- MemoryReusedUnitCount: {summary.get('memory_reused_unit_count', '0')}",
+        "- MemoryAvgReusedUnitsPerQuery: "
+        f"{summary.get('memory_avg_reused_units_per_query', '0')}",
+        f"- MemoryAvgScore: {summary.get('memory_avg_score', '0')}",
+        "- MemoryAvgSemanticSimilarity: "
+        f"{summary.get('memory_avg_semantic_similarity', '0')}",
+        "- MemoryAvgTagOverlapScore: "
+        f"{summary.get('memory_avg_tag_overlap_score', '0')}",
         f"- QualityPreservationRate: {summary.get('quality_preservation_rate', '0')}",
         f"- RustCoreEnabledRuns: {summary.get('rust_core_enabled_runs', '0')}",
         f"- RustSandboxBackendRuns: {summary.get('rust_sandbox_backend_runs', '0')}",

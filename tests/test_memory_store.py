@@ -87,12 +87,12 @@ def test_memory_store_semantic_search_handles_chinese_query(tmp_path: Path) -> N
     )
     unrelated = MemoryUnit(
         source_agent="summarizer",
-        task_topic="快速排序",
-        summary="快速排序通过分治和基准值划分列表。",
+        task_topic="图搜索",
+        summary="图搜索通过遍历相邻节点查找目标路径。",
         tags=["code"],
         evidence_refs=[],
         state_refs=[],
-        embedding_vector=encoder.encode("快速排序代码实现"),
+        embedding_vector=encoder.encode("图搜索代码实现"),
         confidence=0.9,
         validity_score=0.9,
         provenance_trace_id="trace-sort",

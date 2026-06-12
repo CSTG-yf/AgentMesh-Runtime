@@ -33,6 +33,9 @@ class RunMetrics(BaseModel):
     memory_hit_count: int = 0
     memory_query_hit_count: int = 0
     memory_reused_unit_count: int = 0
+    memory_avg_score: float = 0.0
+    memory_avg_semantic_similarity: float = 0.0
+    memory_avg_tag_overlap_score: float = 0.0
     latency_ms: int = 0
     stage_latency_ms: dict[str, int] = Field(default_factory=dict)
     answer_quality_score: float = 1.0
