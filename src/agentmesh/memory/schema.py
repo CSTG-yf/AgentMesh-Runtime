@@ -11,6 +11,7 @@ class MemoryUnit(BaseModel):
     last_used_at: datetime | None = None
     task_topic: str
     summary: str
+    content: str = ""
     tags: list[str] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
     state_refs: list[str] = Field(default_factory=list)

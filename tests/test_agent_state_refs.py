@@ -95,6 +95,17 @@ def test_retriever_reads_query_ref_and_returns_memory_hits(tmp_path: Path) -> No
     evidence = result.result["evidence"]
     assert any(item.get("memory_id") for item in evidence)
     assert any(item.get("title") == "code validation prior result" for item in evidence)
+    assert "memory_hits" not in result.result
+    memory_hit_logs = read_jsonl(paths.protocol_memory_hits)
+    assert memory_hit_logs
+    assert memory_hit_logs[0]["query"] == "Need code validation output."
+    memory_hits = memory_hit_logs[0]["memory_hits"]
+    assert memory_hits[0]["task_topic"] == "code validation prior result"
+    assert memory_hits[0]["summary"] == (
+        "A prior code task produced validation output in a sandbox."
+    )
+    assert memory_hits[0]["memory_id"]
+    assert memory_hits[0]["score"] > 0
     record, _ = StateStore(paths).get(query_ref)
     assert "retriever" in record.consumers
 

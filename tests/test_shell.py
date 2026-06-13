@@ -4,8 +4,10 @@ from rich.console import Console
 
 from agentmesh.eval.compare import CompareAgentOutput, CompareSummary
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
+from agentmesh.memory.schema import MemoryUnit
+from agentmesh.memory.search import MemorySearchResult
 from agentmesh.shell.commands import parse_shell_line
-from agentmesh.shell.render import _aligned_agent_output_rows, render_compare
+from agentmesh.shell.render import _aligned_agent_output_rows, render_compare, render_memory
 from agentmesh.shell.session import ShellSession
 from agentmesh.storage.agent_io import append_protocol_agent_io
 from agentmesh.storage.jsonl import append_jsonl
@@ -111,7 +113,17 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
             mode="protocol",
             trace_id="trace-protocol",
             answer="protocol final answer",
-            metrics=RunMetrics(message_count=20, estimated_tokens=20, wire_bytes=400),
+            metrics=RunMetrics(
+                message_count=20,
+                estimated_tokens=20,
+                wire_bytes=400,
+                memory_query_count=2,
+                memory_query_hit_count=1,
+                memory_reused_unit_count=3,
+                memory_avg_score=0.7,
+                memory_avg_semantic_similarity=0.5,
+                memory_avg_tag_overlap_score=0.25,
+            ),
         ),
         text_agent_outputs=[
             CompareAgentOutput(
@@ -149,6 +161,33 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
     assert "protocol final answer" in rendered
     assert "text planner output" in rendered
     assert "protocol planner output" in rendered
+    assert "memory queries" in rendered
+    assert "memory query hits" in rendered
+    assert "memory reused units" in rendered
+    assert "memory avg semantic" in rendered
+
+
+def test_render_memory_shows_semantic_score_and_vector_source_content() -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=160)
+    unit = MemoryUnit(
+        source_agent="summarizer",
+        task_topic="sorting",
+        summary="Short summary.",
+        content="Original vectorized text about sorting stability and ranking.",
+        tags=["sort"],
+        evidence_refs=[],
+        state_refs=[],
+        confidence=0.9,
+        validity_score=0.9,
+        provenance_trace_id="trace-render",
+    )
+
+    render_memory(console, [MemorySearchResult(memory=unit, score=0.81234)])
+
+    rendered = output.getvalue()
+    assert "0.8123" in rendered
+    assert "Original vectorized text about sorting stability and ranking." in rendered
 
 
 def test_render_compare_does_not_ellipsis_long_agent_log_lines() -> None:

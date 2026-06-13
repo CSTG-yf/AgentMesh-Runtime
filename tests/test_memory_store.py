@@ -68,6 +68,33 @@ def test_memory_store_semantic_search_uses_inline_embedding_vector(tmp_path: Pat
     assert results[0].memory_id == unit.memory_id
 
 
+def test_memory_store_persists_vector_source_content(tmp_path: Path) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    state_store = StateStore(paths)
+    encoder = HashEmbeddingEncoder()
+    memory_store = SQLiteMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
+    unit = MemoryUnit(
+        source_agent="summarizer",
+        task_topic="sorting algorithms",
+        summary="Sorting comparison summary.",
+        content="Original vectorized memory text about quicksort and stable sorting.",
+        tags=["sort"],
+        evidence_refs=[],
+        state_refs=[],
+        embedding_vector=encoder.encode("Original vectorized memory text about quicksort"),
+        confidence=0.9,
+        validity_score=0.9,
+        provenance_trace_id="trace-content",
+    )
+
+    memory_store.put(unit)
+
+    results = memory_store.semantic_search_with_scores("stable sorting quicksort")
+    assert results[0].memory.memory_id == unit.memory_id
+    assert results[0].memory.content == unit.content
+    assert memory_store.keyword_search("quicksort")[0].memory_id == unit.memory_id
+
+
 def test_memory_store_semantic_search_handles_chinese_query(tmp_path: Path) -> None:
     paths = RuntimePaths(root=tmp_path)
     state_store = StateStore(paths)

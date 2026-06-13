@@ -48,6 +48,13 @@ class CompareSummary(BaseModel):
     latency_reduction_rate: float
     wire_bytes_reduction_rate: float
     memory_hit_rate: float
+    memory_query_count: int = 0
+    memory_query_hit_count: int = 0
+    memory_reused_unit_count: int = 0
+    memory_avg_reused_units_per_query: float = 0.0
+    memory_avg_score: float = 0.0
+    memory_avg_semantic_similarity: float = 0.0
+    memory_avg_tag_overlap_score: float = 0.0
 
 
 def run_prompt_compare(
@@ -273,6 +280,24 @@ def _build_summary(
             protocol_result.metrics.wire_bytes,
         ),
         memory_hit_rate=protocol_result.metrics.memory_hit_rate,
+        memory_query_count=protocol_result.metrics.memory_query_count,
+        memory_query_hit_count=(
+            protocol_result.metrics.memory_query_hit_count
+            or min(
+                protocol_result.metrics.memory_hit_count,
+                protocol_result.metrics.memory_query_count,
+            )
+        ),
+        memory_reused_unit_count=protocol_result.metrics.memory_reused_unit_count,
+        memory_avg_reused_units_per_query=(
+            protocol_result.metrics.memory_reused_unit_count
+            / protocol_result.metrics.memory_query_count
+            if protocol_result.metrics.memory_query_count
+            else 0.0
+        ),
+        memory_avg_score=protocol_result.metrics.memory_avg_score,
+        memory_avg_semantic_similarity=protocol_result.metrics.memory_avg_semantic_similarity,
+        memory_avg_tag_overlap_score=protocol_result.metrics.memory_avg_tag_overlap_score,
     )
 
 

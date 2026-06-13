@@ -22,3 +22,4 @@ data/
 .env
 .env.*
 !.env.example
+.claude/

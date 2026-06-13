@@ -204,7 +204,7 @@ class ShellSession:
         elif args[0] == "--tag":
             results = store.tag_search(query)
         else:
-            results = store.semantic_search(query)
+            results = store.semantic_search_with_scores(query)
         render_memory(self.console, results)
 
     def _trace(self, args: list[str]) -> None:

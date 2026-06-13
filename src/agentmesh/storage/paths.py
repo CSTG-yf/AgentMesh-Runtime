@@ -57,6 +57,10 @@ class RuntimePaths(BaseModel):
         return self.protocol_dir / "memory.jsonl"
 
     @property
+    def protocol_memory_hits(self) -> Path:
+        return self.protocol_dir / "memory_hits.jsonl"
+
+    @property
     def protocol_trace(self) -> Path:
         return self.protocol_dir / "trace.jsonl"
 

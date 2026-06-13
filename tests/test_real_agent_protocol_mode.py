@@ -1,8 +1,10 @@
 from pathlib import Path
 from typing import Any
 
+from agentmesh.errors import SandboxTimeoutError
 from agentmesh.llm.client import ChatMessage, LLMClient
 from agentmesh.modes.protocol_mode import run_protocol_mode
+from agentmesh.sandbox.runner import SandboxRunner
 from agentmesh.state.schema import StateType
 from agentmesh.state.store import StateStore
 from agentmesh.storage.paths import RuntimePaths
@@ -70,3 +72,35 @@ def test_protocol_mode_uses_llm_outputs_as_agent_state(tmp_path: Path) -> None:
     assert executor_results[0]["executor_result"]["llm_generated_code"] is True
     assert executor_results[0]["codeact"]["stdout"].strip() == "executor model response"
     assert executor_results[0]["codeact"]["exit_code"] == 0
+
+
+def test_protocol_mode_continues_when_sandbox_times_out(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("写一个桶排序", encoding="utf-8")
+    paths = RuntimePaths(root=tmp_path)
+
+    def timeout_run_python(self: SandboxRunner, code: str):
+        del self, code
+        raise SandboxTimeoutError("Sandbox execution timed out")
+
+    monkeypatch.setattr(SandboxRunner, "run_python", timeout_run_python)
+
+    result = run_protocol_mode(
+        task_path=task,
+        paths=paths,
+        load_configured_llm=False,
+    )
+
+    state_store = StateStore(paths)
+    executor_results = [
+        state_store.get(record.ref)[1]
+        for record in state_store.list_by_trace(result.trace_id)
+        if record.producer == "executor" and record.state_type == StateType.CODE_RESULT
+    ]
+
+    assert "sandbox exit 124" in result.answer
+    assert executor_results[0]["codeact"]["exit_code"] == 124
+    assert executor_results[0]["codeact"]["stderr"] == "Sandbox execution timed out"

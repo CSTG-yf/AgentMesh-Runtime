@@ -11,6 +11,7 @@ from rich.text import Text
 from agentmesh.eval.benchmark import BenchmarkSummary
 from agentmesh.eval.compare import CompareAgentOutput, CompareProgressEvent, CompareSummary
 from agentmesh.memory.schema import MemoryUnit
+from agentmesh.memory.search import MemorySearchResult
 
 _AGENT_DISPLAY_ORDER = ["planner", "retriever", "executor", "summarizer"]
 
@@ -92,8 +93,49 @@ def render_compare(console: Console, summary: CompareSummary) -> None:
     )
     table.add_row(
         "memory hit rate",
-        str(summary.text.metrics.memory_hit_rate),
-        str(summary.protocol.metrics.memory_hit_rate),
+        _rate_text(summary.text.metrics.memory_hit_rate),
+        _rate_text(summary.protocol.metrics.memory_hit_rate),
+    )
+    table.add_row(
+        "memory queries",
+        str(summary.text.metrics.memory_query_count),
+        str(summary.protocol.metrics.memory_query_count),
+    )
+    table.add_row(
+        "memory query hits",
+        str(summary.text.metrics.memory_query_hit_count),
+        str(
+            summary.protocol.metrics.memory_query_hit_count
+            or min(
+                summary.protocol.metrics.memory_hit_count,
+                summary.protocol.metrics.memory_query_count,
+            )
+        ),
+    )
+    table.add_row(
+        "memory reused units",
+        str(summary.text.metrics.memory_reused_unit_count),
+        str(summary.protocol.metrics.memory_reused_unit_count),
+    )
+    table.add_row(
+        "memory reused/query",
+        _avg_reused_units_text(summary.text.metrics),
+        _avg_reused_units_text(summary.protocol.metrics),
+    )
+    table.add_row(
+        "memory avg score",
+        _rate_text(summary.text.metrics.memory_avg_score),
+        _rate_text(summary.protocol.metrics.memory_avg_score),
+    )
+    table.add_row(
+        "memory avg semantic",
+        _rate_text(summary.text.metrics.memory_avg_semantic_similarity),
+        _rate_text(summary.protocol.metrics.memory_avg_semantic_similarity),
+    )
+    table.add_row(
+        "memory avg tag overlap",
+        _rate_text(summary.text.metrics.memory_avg_tag_overlap_score),
+        _rate_text(summary.protocol.metrics.memory_avg_tag_overlap_score),
     )
     table.add_row("token_saving_rate", _rate_text(summary.token_saving_rate), "")
     table.add_row(
@@ -130,22 +172,28 @@ def render_benchmark(console: Console, summary: BenchmarkSummary) -> None:
     console.print(summary.model_dump())
 
 
-def render_memory(console: Console, results: list[MemoryUnit]) -> None:
+def render_memory(console: Console, results: list[MemoryUnit | MemorySearchResult]) -> None:
     if not results:
         console.print("[yellow]No memory matched.[/yellow]")
         return
     table = Table(title="Shared memory")
     table.add_column("ID")
     table.add_column("Source")
+    table.add_column("Score")
     table.add_column("Topic")
     table.add_column("Summary")
+    table.add_column("Content")
     table.add_column("Tags")
-    for unit in results:
+    for item in results:
+        unit = item.memory if isinstance(item, MemorySearchResult) else item
+        score = f"{item.score:.4f}" if isinstance(item, MemorySearchResult) else ""
         table.add_row(
             unit.memory_id,
             unit.source_agent,
+            score,
             unit.task_topic,
             unit.summary,
+            unit.content or unit.summary,
             ", ".join(unit.tags),
         )
     console.print(table)
@@ -231,3 +279,9 @@ def _clip(value: str, limit: int) -> str:
 
 def _rate_text(value: float) -> str:
     return f"{value:.4f}"
+
+
+def _avg_reused_units_text(metrics: Any) -> str:
+    if metrics.memory_query_count == 0:
+        return "0.0000"
+    return f"{metrics.memory_reused_unit_count / metrics.memory_query_count:.4f}"

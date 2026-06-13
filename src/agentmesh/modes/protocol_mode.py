@@ -7,6 +7,7 @@ from uuid import uuid4
 import orjson
 
 from agentmesh.core import rust_available
+from agentmesh.errors import SandboxTimeoutError
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
 from agentmesh.eval.quality import deterministic_quality_score
 from agentmesh.llm.client import LLMClient
@@ -25,7 +26,7 @@ from agentmesh.runtime.decision import PlannerDecision
 from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.runtime.scheduler import ProtocolScheduler
-from agentmesh.sandbox.runner import SandboxRunner
+from agentmesh.sandbox.runner import SandboxResult, SandboxRunner
 from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import append_jsonl
@@ -274,7 +275,16 @@ def _run_protocol_mode_impl(
 
         stage_start = time.perf_counter()
         codeact_code = str(executor_result.result.get("codeact_code") or "")
-        sandbox_result = SandboxRunner(paths.sandbox_dir).run_python(codeact_code)
+        try:
+            sandbox_result = SandboxRunner(paths.sandbox_dir).run_python(codeact_code)
+        except SandboxTimeoutError as exc:
+            sandbox_result = SandboxResult(
+                stdout="",
+                stderr=str(exc),
+                exit_code=124,
+                latency_ms=0,
+                backend="timeout",
+            )
         sandbox_backend = sandbox_result.backend
         mark_stage("sandbox", stage_start)
 
@@ -416,7 +426,8 @@ def _run_protocol_mode_impl(
         parent_state_refs=summary_state_refs,
         metadata={"llm_used": model_summary is not None},
     )
-    memory_embedding = encoder.encode(summary_text)
+    memory_content = summary_text
+    memory_embedding = encoder.encode(memory_content)
     memory_embedding_ref = state_store.put_embedding(
         trace_id=trace_id,
         producer="summarizer",
@@ -435,6 +446,7 @@ def _run_protocol_mode_impl(
         source_agent="summarizer",
         task_topic=classification.topic,
         summary=summary_text,
+        content=memory_content,
         tags=classification.tags,
         evidence_refs=[ref for ref in [evidence_ref, refined_evidence_ref] if ref],
         state_refs=[

@@ -8,6 +8,7 @@ from agentmesh.runtime.agent import BaseAgent
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.store import StateStore
+from agentmesh.storage.jsonl import append_jsonl
 
 
 class RetrieverAgent(BaseAgent):
@@ -62,6 +63,14 @@ class RetrieverAgent(BaseAgent):
             }
         ]
         memory_results = _memory_results(context=context, query=query, query_tags=query_tags)
+        memory_hits = [_memory_hit_log_item(result) for result in memory_results]
+        _append_memory_hit_log(
+            context=context,
+            action=message.action,
+            query=query,
+            query_tags=query_tags,
+            memory_hits=memory_hits,
+        )
         evidence.extend(
             {
                 "title": result.memory.task_topic,
@@ -130,6 +139,54 @@ def _run_memory_search(
     for result in results:
         store.increment_reuse(result.memory.memory_id)
     return results
+
+
+def _memory_hit_log_item(result: MemorySearchResult) -> dict[str, object]:
+    memory = result.memory
+    return {
+        "memory_id": memory.memory_id,
+        "source_agent": memory.source_agent,
+        "task_topic": memory.task_topic,
+        "summary": memory.summary,
+        "tags": memory.tags,
+        "memory_type": memory.memory_type,
+        "domain": memory.domain,
+        "provenance_trace_id": memory.provenance_trace_id,
+        "state_refs": memory.state_refs,
+        "evidence_refs": memory.evidence_refs,
+        "score": round(float(result.score), 4),
+        "semantic_similarity": round(float(result.semantic_similarity), 4),
+        "tag_overlap_score": round(float(result.tag_overlap_score), 4),
+        "validity_score": round(float(result.validity_score), 4),
+        "confidence_score": round(float(result.confidence_score), 4),
+        "reuse_score": round(float(result.reuse_score), 4),
+        "recency_score": round(float(result.recency_score), 4),
+        "reason": result.reason,
+    }
+
+
+def _append_memory_hit_log(
+    *,
+    context: RuntimeContext,
+    action: str,
+    query: str,
+    query_tags: list[str],
+    memory_hits: list[dict[str, object]],
+) -> None:
+    if not memory_hits:
+        return
+    append_jsonl(
+        context.paths.protocol_memory_hits,
+        {
+            "trace_id": context.trace_id,
+            "agent": "retriever",
+            "action": action,
+            "query": query,
+            "query_tags": query_tags,
+            "memory_hit_count": len(memory_hits),
+            "memory_hits": memory_hits,
+        },
+    )
 
 
 def _derive_tags(text: str) -> list[str]:

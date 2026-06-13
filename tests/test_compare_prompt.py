@@ -70,6 +70,63 @@ def test_prompt_compare_uses_llm_by_default_and_can_disable_it(
     ]
 
 
+def test_prompt_compare_summarizes_memory_metrics(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    def fake_text_mode(
+        task_path: Path,
+        paths: RuntimePaths,
+        llm_client=None,
+        load_configured_llm: bool = True,
+    ) -> ModeRunResult:
+        del task_path, paths, llm_client, load_configured_llm
+        return ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100),
+        )
+
+    def fake_protocol_mode(
+        task_path: Path,
+        paths: RuntimePaths,
+        llm_client=None,
+        load_configured_llm: bool = True,
+    ) -> ModeRunResult:
+        del task_path, paths, llm_client, load_configured_llm
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol",
+            metrics=RunMetrics(
+                estimated_tokens=5,
+                wire_bytes=50,
+                memory_query_count=2,
+                memory_query_hit_count=1,
+                memory_hit_count=3,
+                memory_reused_unit_count=4,
+                memory_avg_score=0.6,
+                memory_avg_semantic_similarity=0.4,
+                memory_avg_tag_overlap_score=0.25,
+            ),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.compare.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.compare.run_protocol_mode", fake_protocol_mode)
+
+    summary = run_prompt_compare("hello", RuntimePaths(root=tmp_path))
+
+    assert summary.memory_hit_rate == 0.5
+    assert summary.memory_query_count == 2
+    assert summary.memory_query_hit_count == 1
+    assert summary.memory_reused_unit_count == 4
+    assert summary.memory_avg_reused_units_per_query == 2.0
+    assert summary.memory_avg_score == 0.6
+    assert summary.memory_avg_semantic_similarity == 0.4
+    assert summary.memory_avg_tag_overlap_score == 0.25
+
+
 def test_prompt_compare_streams_and_collects_agent_outputs(
     tmp_path,
     monkeypatch,

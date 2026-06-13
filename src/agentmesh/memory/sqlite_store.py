@@ -38,12 +38,12 @@ class SQLiteMemoryStore:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO memory_units (
-                    memory_id, source_agent, created_at, last_used_at, task_topic, summary,
+                    memory_id, source_agent, created_at, last_used_at, task_topic, summary, content,
                     tags_json, evidence_refs_json, state_refs_json, embedding_ref, reuse_count,
                     confidence, validity_score, reuse_policy, provenance_trace_id,
                     status, importance_score, last_compacted_at, archive_reason,
                     source_memory_ids_json, memory_type, domain, write_scope, embedding_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     unit.memory_id,
@@ -52,6 +52,7 @@ class SQLiteMemoryStore:
                     unit.last_used_at.isoformat() if unit.last_used_at else None,
                     unit.task_topic,
                     unit.summary,
+                    _memory_content(unit),
                     orjson.dumps(unit.tags).decode("utf-8"),
                     orjson.dumps(unit.evidence_refs).decode("utf-8"),
                     orjson.dumps(unit.state_refs).decode("utf-8"),
@@ -74,10 +75,16 @@ class SQLiteMemoryStore:
             )
             conn.execute(
                 """
-                INSERT OR REPLACE INTO memory_fts(memory_id, task_topic, summary, tags)
-                VALUES (?, ?, ?, ?)
+                INSERT OR REPLACE INTO memory_fts(memory_id, task_topic, summary, content, tags)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (unit.memory_id, unit.task_topic, unit.summary, " ".join(unit.tags)),
+                (
+                    unit.memory_id,
+                    unit.task_topic,
+                    unit.summary,
+                    _memory_content(unit),
+                    " ".join(unit.tags),
+                ),
             )
         for ref in unit.state_refs + unit.evidence_refs:
             if ref.startswith("state://") and self.state_store.exists(ref):
@@ -233,6 +240,7 @@ class SQLiteMemoryStore:
                     last_used_at TEXT,
                     task_topic TEXT NOT NULL,
                     summary TEXT NOT NULL,
+                    content TEXT DEFAULT '',
                     tags_json TEXT NOT NULL,
                     evidence_refs_json TEXT NOT NULL,
                     state_refs_json TEXT NOT NULL,
@@ -257,10 +265,11 @@ class SQLiteMemoryStore:
             conn.execute(
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts
-                USING fts5(memory_id, task_topic, summary, tags)
+                USING fts5(memory_id, task_topic, summary, content, tags)
                 """
             )
             self._ensure_columns(conn)
+            self._ensure_fts_schema(conn)
 
     def _connect(self) -> sqlite3.Connection:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,10 +292,32 @@ class SQLiteMemoryStore:
             "domain": "'general'",
             "write_scope": "'run'",
             "embedding_json": "'null'",
+            "content": "''",
         }
         for column, default in defaults.items():
             if column not in columns:
                 conn.execute(f"ALTER TABLE memory_units ADD COLUMN {column} DEFAULT {default}")
+
+    def _ensure_fts_schema(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("PRAGMA table_info(memory_fts)").fetchall()
+        columns = [str(row[1]) for row in rows]
+        expected = ["memory_id", "task_topic", "summary", "content", "tags"]
+        if columns == expected:
+            return
+        conn.execute("DROP TABLE IF EXISTS memory_fts")
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE memory_fts
+            USING fts5(memory_id, task_topic, summary, content, tags)
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO memory_fts(memory_id, task_topic, summary, content, tags)
+            SELECT memory_id, task_topic, summary, COALESCE(content, summary), tags_json
+            FROM memory_units
+            """
+        )
 
     def _all_units(self) -> list[MemoryUnit]:
         with self._connect() as conn:
@@ -401,6 +432,7 @@ class SQLiteMemoryStore:
             else None,
             task_topic=str(row["task_topic"]),
             summary=str(row["summary"]),
+            content=str(row["content"] or row["summary"]),
             tags=list(orjson.loads(row["tags_json"])),
             evidence_refs=list(orjson.loads(row["evidence_refs_json"])),
             state_refs=list(orjson.loads(row["state_refs_json"])),
@@ -452,6 +484,10 @@ def _loads_embedding(raw: object) -> list[float] | None:
     if not isinstance(loaded, list):
         return None
     return [float(value) for value in loaded]
+
+
+def _memory_content(unit: MemoryUnit) -> str:
+    return unit.content or unit.summary
 
 
 def _fts_query(keyword: str) -> str:
