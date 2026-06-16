@@ -1,9 +1,0 @@
-Task LC-A5: Draft a final report section for the AgentMesh contest submission.
-
-Context block: The report should explain the design motivation, agent roles, protocol fields, typed envelope compression, StateStore payload lifecycle, embedding generation, shared memory search, CodeAct sandbox execution, benchmark setup, and observed metrics. It should make clear that video and static report artifacts are separate delivery items, while this task focuses on technical content.
-
-Repeated evidence: A strong report avoids claiming that every metric is positive. It should say token and wire-byte savings improve under long contexts, while latency may increase when the protocol path does extra state, memory, and sandbox work. It should explain future optimization work such as Rust typed envelope routing, IPC, shared memory, vector database indexing, or stronger sandbox isolation. This repeated material pushes text mode to resend report context at each handoff.
-
-Repeated evidence: A strong report avoids claiming that every metric is positive. It should say token and wire-byte savings improve under long contexts, while latency may increase when the protocol path does extra state, memory, and sandbox work. It should explain future optimization work such as Rust typed envelope routing, IPC, shared memory, vector database indexing, or stronger sandbox isolation. This repeated material pushes text mode to resend report context at each handoff.
-
-Deliverable: produce a concise final report outline with evidence bullets.

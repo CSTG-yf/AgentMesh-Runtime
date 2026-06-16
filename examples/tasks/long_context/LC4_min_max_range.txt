@@ -1,0 +1,2 @@
+﻿Find and print the minimum value, maximum value, and range (max - min) from the sorted list obtained in earlier steps.
+Print each on a separate line labelled as min, max, range.

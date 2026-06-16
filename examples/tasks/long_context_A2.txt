@@ -1,9 +1,0 @@
-Task LC-A2: Design the runtime architecture for a structured multi-agent system.
-
-Context block: The architecture must include a multi-agent runtime, a protocol parser and scheduler, a state exchange module, a shared memory store and retrieval module, and an evaluation module. The system should preserve readable protocol logs while supporting a lower-overhead typed envelope model. Rust Core should accelerate StateRef parsing, message encoding, hash embedding, semantic top-k, and sandbox subprocess primitives where possible.
-
-Repeated evidence: PlannerAgent creates task plans, RetrieverAgent searches memory and collects evidence, ExecutorAgent performs CodeAct-style code generation and sandbox execution, and SummarizerAgent produces final summaries and writes MemoryUnit records. Text Mode forwards full accumulated context. Protocol Mode writes payloads into StateStore and forwards structured AMP messages plus state references. The benchmark compares both modes on identical input files. This long architecture context is deliberately redundant to amplify communication cost differences.
-
-Repeated evidence: PlannerAgent creates task plans, RetrieverAgent searches memory and collects evidence, ExecutorAgent performs CodeAct-style code generation and sandbox execution, and SummarizerAgent produces final summaries and writes MemoryUnit records. Text Mode forwards full accumulated context. Protocol Mode writes payloads into StateStore and forwards structured AMP messages plus state references. The benchmark compares both modes on identical input files. This long architecture context is deliberately redundant to amplify communication cost differences.
-
-Deliverable: propose module boundaries, data flow, and the metrics that prove reduced repeated communication.

@@ -1,9 +1,0 @@
-Task LC-B1: Review a repository as a multi-agent code analysis workflow.
-
-Context block: The planner should split repository review into file discovery, architecture extraction, risk identification, test coverage review, and report generation. The retriever should reuse prior memory about protocol, state, and benchmark design. The executor should run a CodeAct snippet in the sandbox to validate simple derived metrics. The summarizer should turn the evidence and code result into reusable memory.
-
-Repeated evidence: The same repository context often appears across follow-up tasks: module names, CLI commands, test suites, benchmark metrics, and architecture notes. Text Mode must pass these details repeatedly. Protocol Mode can store them once as TextState, SummaryState, EvidenceState, CodeResultState, and MemoryUnit, then pass StateRefs. This repetition is intentional for long-context communication evaluation.
-
-Repeated evidence: The same repository context often appears across follow-up tasks: module names, CLI commands, test suites, benchmark metrics, and architecture notes. Text Mode must pass these details repeatedly. Protocol Mode can store them once as TextState, SummaryState, EvidenceState, CodeResultState, and MemoryUnit, then pass StateRefs. This repetition is intentional for long-context communication evaluation.
-
-Deliverable: summarize repository risks and identify reusable memory entries for later tasks.

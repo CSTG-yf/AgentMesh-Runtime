@@ -1,0 +1,2 @@
+﻿Compare linear search and binary search algorithms. Search for 55 in [10, 25, 34, 42, 55, 67, 78, 89, 91, 100].
+Explain the steps each algorithm takes and why one is more efficient for sorted data.

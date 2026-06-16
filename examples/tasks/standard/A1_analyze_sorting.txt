@@ -1,0 +1,4 @@
+﻿Analyze how quicksort performs on partially sorted arrays compared to completely unsorted ones.
+Consider the number of comparisons and swaps in each case. The array is: [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]
+
+Provide a brief analysis of why quicksort behaves differently on this input and what the performance characteristics are.

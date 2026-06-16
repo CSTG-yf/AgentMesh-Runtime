@@ -3,6 +3,7 @@ from io import StringIO
 from rich.console import Console
 
 from agentmesh.eval.compare import CompareAgentOutput, CompareSummary
+from agentmesh.eval.benchmark import BenchmarkProgressEvent
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.search import MemorySearchResult
@@ -40,6 +41,12 @@ def test_shell_help_and_config_do_not_fail(tmp_path) -> None:
 
     rendered = output.getvalue()
     assert "AgentMesh shell commands" in rendered
+    assert "/benchmark [--no-llm] standard" in rendered
+    assert "运行标准评测套件" in rendered
+    assert "/benchmark [--no-llm] long" in rendered
+    assert "运行长上下文评测套件" in rendered
+    assert "/benchmark [--no-llm] <suite.yaml>" in rendered
+    assert "运行自定义 YAML 评测套件" in rendered
     assert "llm_configured" in rendered
     assert "api_key" not in rendered.lower()
 
@@ -98,6 +105,98 @@ def test_shell_compare_uses_llm_by_default_and_can_disable_it(
     assert session.handle_line("/compare --no-llm hello")
 
     assert calls == [True, False]
+
+
+def test_shell_benchmark_prints_progress_and_output_paths(tmp_path, monkeypatch) -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=160)
+    session = ShellSession(paths=RuntimePaths(root=tmp_path), console=console)
+
+    suite = tmp_path / "examples" / "benchmarks" / "continuous_tasks.yaml"
+    suite.parent.mkdir(parents=True)
+    suite.write_text(
+        """
+name: shell_progress_suite
+tasks:
+  - id: T1
+    group: T
+    topic: protocol memory
+    input_file: task.txt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    class FakeSummary:
+        suite_name = "shell_progress_suite"
+        total_runs = 1
+
+    def fake_run_benchmark(suite_path, paths, *, use_llm=True, progress_callback=None):
+        del suite_path, paths, use_llm
+        assert progress_callback is not None
+        progress_callback(
+            BenchmarkProgressEvent(
+                phase="suite_start",
+                suite_name="shell_progress_suite",
+                total_tasks=1,
+                total_stages=2,
+                repeat_total=1,
+                use_llm=False,
+            )
+        )
+        progress_callback(
+            BenchmarkProgressEvent(
+                phase="mode_complete",
+                suite_name="shell_progress_suite",
+                total_tasks=1,
+                total_stages=2,
+                current_task=1,
+                current_stage=1,
+                repeat_index=1,
+                repeat_total=1,
+                task_id="T1",
+                group="T",
+                topic="protocol memory",
+                mode="text",
+                trace_id="trace-text",
+                latency_ms=12,
+                tokens=34,
+                bytes=56,
+                use_llm=False,
+            )
+        )
+        progress_callback(
+            BenchmarkProgressEvent(
+                phase="suite_complete",
+                suite_name="shell_progress_suite",
+                total_tasks=1,
+                total_stages=2,
+                current_task=1,
+                current_stage=2,
+                repeat_total=1,
+                use_llm=False,
+            )
+        )
+        return FakeSummary()
+
+    def fake_render_benchmark(console, summary):
+        console.print(f"rendered benchmark {summary.suite_name}")
+
+    monkeypatch.setattr("agentmesh.shell.session.run_benchmark", fake_run_benchmark)
+    monkeypatch.setattr("agentmesh.shell.session.render_benchmark", fake_render_benchmark)
+
+    assert session.handle_line("/benchmark --no-llm standard")
+
+    rendered = output.getvalue()
+    assert "benchmark started" in rendered
+    assert "stage completed" in rendered
+    assert "任务 1/1" in rendered
+    assert "id=T1" in rendered
+    assert "mode=text" in rendered
+    assert "benchmark completed" in rendered
+    assert "Benchmark output files" in rendered
+    assert "benchmark_summary.csv" in rendered
+    assert "benchmark_detail.jsonl" in rendered
+    assert "experiment_report.md" in rendered
 
 
 def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:

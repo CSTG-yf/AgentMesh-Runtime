@@ -1,9 +1,0 @@
-Task LC-B4: Write API documentation for the runtime modules.
-
-Context block: Document AMPMessage, TypedEnvelope, StateStore, HashEmbeddingEncoder, SQLiteMemoryStore, SandboxRunner, ExecutorAgent CodeAct behavior, run_text_mode, run_protocol_mode, run_prompt_compare, run_benchmark, and generate_report. Include inputs, outputs, important fields, and examples of how a user runs the two-mode comparison.
-
-Repeated evidence: Good API documentation should connect code APIs to contest requirements. It should show how action, params, result, capability, and state_refs appear in messages; how MemoryUnit metadata is stored; how semantic search retrieves prior tasks; how CodeResultState stores sandbox output; and how benchmark summaries compare text and protocol mode. This repeated API context makes long text transmission costly.
-
-Repeated evidence: Good API documentation should connect code APIs to contest requirements. It should show how action, params, result, capability, and state_refs appear in messages; how MemoryUnit metadata is stored; how semantic search retrieves prior tasks; how CodeResultState stores sandbox output; and how benchmark summaries compare text and protocol mode. This repeated API context makes long text transmission costly.
-
-Deliverable: produce concise API docs for developers and reviewers.

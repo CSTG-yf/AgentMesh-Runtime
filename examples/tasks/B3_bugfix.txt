@@ -1,1 +1,0 @@
-Plan a deterministic bug fix flow where Planner creates steps, Retriever collects evidence, Executor validates with Python, and Summarizer writes memory.

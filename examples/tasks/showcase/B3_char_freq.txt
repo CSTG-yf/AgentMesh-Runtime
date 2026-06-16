@@ -1,0 +1,5 @@
+﻿Write a Python program to count character frequencies (letters only, case-insensitive) in the following text:
+
+"Hello World This is a Test Message With Some Repeated Characters"
+
+Print each character followed by its count, one per line, sorted alphabetically.

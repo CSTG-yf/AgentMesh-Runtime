@@ -22,6 +22,8 @@ from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.shell.commands import ParsedShellCommand, join_prompt, parse_shell_line
 from agentmesh.shell.render import (
+    render_benchmark_artifacts,
+    render_benchmark_progress,
     render_benchmark,
     render_compare,
     render_compare_progress,
@@ -184,12 +186,23 @@ class ShellSession:
         self.console.print(result.model_dump())
 
     def _benchmark(self, args: list[str]) -> None:
+        use_llm = True
+        if "--no-llm" in args:
+            use_llm = False
+            args = [arg for arg in args if arg != "--no-llm"]
         if len(args) != 1:
-            self.console.print("[red]Usage:[/red] /benchmark standard|long|<suite.yaml>")
+            self.console.print("[red]Usage:[/red] /benchmark [--no-llm] standard|long|<suite.yaml>")
             return
         suite = _suite_path(self.paths.root, args[0])
-        summary = run_benchmark(suite, self.paths)
+        summary = run_benchmark(
+            suite,
+            self.paths,
+            use_llm=use_llm,
+            progress_callback=lambda event: render_benchmark_progress(self.console, event),
+        )
         render_benchmark(self.console, summary)
+        report_path = generate_report(self.paths)
+        render_benchmark_artifacts(self.console, self.paths, report_path=report_path)
 
     def _memory(self, args: list[str]) -> None:
         if len(args) < 2 or args[0] not in {"--keyword", "--tag", "--semantic"}:
@@ -278,6 +291,7 @@ def _suite_path(root: Path, value: str) -> Path:
     aliases = {
         "standard": root / "examples" / "benchmarks" / "continuous_tasks.yaml",
         "long": root / "examples" / "benchmarks" / "long_context_tasks.yaml",
+        "showcase": root / "examples" / "benchmarks" / "showcase_benchmark.yaml",
     }
     path = aliases.get(value, Path(value))
     if not path.is_absolute():

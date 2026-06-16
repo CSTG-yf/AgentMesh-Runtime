@@ -17,7 +17,12 @@ from agentmesh.memory.sqlite_store import SQLiteMemoryStore
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.runtime.registry import RuntimeContext
-from agentmesh.shell.render import render_compare, render_compare_progress
+from agentmesh.shell.render import (
+    render_benchmark_artifacts,
+    render_benchmark_progress,
+    render_compare,
+    render_compare_progress,
+)
 from agentmesh.shell.session import run_shell
 from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.store import StateStore
@@ -70,16 +75,45 @@ def run(
 
 @app.command()
 def benchmark(
-    suite: Annotated[Path, typer.Option(help="Benchmark suite YAML")],
+    suite: Annotated[
+        Path,
+        typer.Option(help="Benchmark suite alias standard|long or custom YAML path"),
+    ],
     root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+    llm: Annotated[
+        bool,
+        typer.Option(
+            "--llm/--no-llm",
+            help="Use the configured LLM from .env; pass --no-llm for offline benchmark.",
+        ),
+    ] = True,
 ) -> None:
     paths = RuntimePaths(root=root)
+    suite_path = _benchmark_suite_path(paths.root, suite)
     try:
-        summary = run_benchmark(suite, paths)
+        summary = run_benchmark(
+            suite_path,
+            paths,
+            use_llm=llm,
+            progress_callback=lambda event: render_benchmark_progress(console, event),
+        )
+        report_path = generate_report(paths)
     except Exception as exc:
         console.print(f"[red]agentmesh benchmark failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     _print_json(summary.model_dump(mode="json"))
+    render_benchmark_artifacts(console, paths, report_path=report_path)
+
+
+def _benchmark_suite_path(root: Path, suite: Path) -> Path:
+    aliases = {
+        "standard": root / "examples" / "benchmarks" / "continuous_tasks.yaml",
+        "long": root / "examples" / "benchmarks" / "long_context_tasks.yaml",
+    }
+    path = aliases.get(str(suite), suite)
+    if not path.is_absolute():
+        path = root / path
+    return path
 
 
 @app.command()

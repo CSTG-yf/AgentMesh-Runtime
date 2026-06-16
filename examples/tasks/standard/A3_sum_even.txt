@@ -1,0 +1,4 @@
+﻿Write a Python program that takes the list [12, 7, 5, 9, 3, 8, 14, 6, 2, 11] and prints:
+1. The sum of all numbers
+2. The count of even numbers
+Print each on a separate line, labelled.

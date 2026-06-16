@@ -1,0 +1,4 @@
+﻿Implement a mergesort function in Python. Sort the following list and print the sorted result: [15, 3, 9, 22, 1, 7, 18, 4, 11, 6]
+
+The function should use the standard mergesort algorithm with a merge helper function.
+Print only the sorted list as output.

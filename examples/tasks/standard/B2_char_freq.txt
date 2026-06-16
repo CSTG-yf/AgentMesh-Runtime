@@ -1,0 +1,5 @@
+﻿Write a Python program to count character frequencies in the string below.
+Count only alphabetic characters (a-z), case-insensitive.
+Print each character and its count, sorted alphabetically.
+
+Input: "Quick Brown Fox Jumps Over The Lazy Dog A Quick Brown Fox"

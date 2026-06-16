@@ -429,7 +429,15 @@ def _run_protocol_mode_impl(
         metadata={"llm_used": model_summary is not None},
     )
     memory_content = summary_text
-    memory_embedding = encoder.encode(memory_content)
+    classification = LLMMemoryTagger(context.llm_client).classify(
+        task=task,
+        summary=summary_text,
+        evidence_count=len(evidence),
+    )
+    # Embed topic + summary together so the vector captures both "what task"
+    # and "what answer", making it retrievable from either direction.
+    embedding_source = f"{classification.topic}: {summary_text}"
+    memory_embedding = encoder.encode(embedding_source)
     memory_embedding_ref = state_store.put_embedding(
         trace_id=trace_id,
         producer="summarizer",
@@ -439,11 +447,6 @@ def _run_protocol_mode_impl(
     mark_stage("summarizer", stage_start)
 
     stage_start = time.perf_counter()
-    classification = LLMMemoryTagger(context.llm_client).classify(
-        task=task,
-        summary=summary_text,
-        evidence_count=len(evidence),
-    )
     unit = MemoryUnit(
         source_agent="summarizer",
         task_topic=classification.topic,

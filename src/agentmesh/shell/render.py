@@ -8,10 +8,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from agentmesh.eval.benchmark import BenchmarkSummary
+from agentmesh.eval.benchmark import BenchmarkProgressEvent, BenchmarkSummary
 from agentmesh.eval.compare import CompareAgentOutput, CompareProgressEvent, CompareSummary
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.search import MemorySearchResult
+from agentmesh.storage.paths import RuntimePaths
 
 _AGENT_DISPLAY_ORDER = ["planner", "retriever", "executor", "summarizer"]
 
@@ -26,7 +27,9 @@ def render_help(console: Console) -> None:
         ("/compare", "/compare [--no-llm] <task>", "流式展示双模式 Agent 输出和指标"),
         ("/ask", "/ask <message>", "流式展示 Protocol Agent 交互"),
         ("/run", "/run text|protocol <task-file>", "运行指定模式"),
-        ("/benchmark", "/benchmark standard|long|<suite.yaml>", "运行评测套件"),
+        ("/benchmark", "/benchmark [--no-llm] standard", "运行标准评测套件，覆盖常规连续任务"),
+        ("/benchmark", "/benchmark [--no-llm] long", "运行长上下文评测套件，观察状态复用和长任务开销"),
+        ("/benchmark", "/benchmark [--no-llm] <suite.yaml>", "运行自定义 YAML 评测套件"),
         ("/memory", "/memory --keyword|--tag|--semantic <query>", "检索共享记忆"),
         ("/trace", "/trace [limit]", "查看最近通信 trace"),
         ("/report", "/report", "生成实验报告"),
@@ -233,7 +236,117 @@ def _render_latency_breakdown(console: Console, summary: CompareSummary) -> None
 
 
 def render_benchmark(console: Console, summary: BenchmarkSummary) -> None:
-    console.print(summary.model_dump())
+    table = Table(title=f"Benchmark: {summary.suite_name} ({summary.total_runs} runs)", show_lines=True)
+    table.add_column("Metric / 指标说明", ratio=2)
+    table.add_column("Text", ratio=1)
+    table.add_column("Protocol", ratio=1)
+
+    _add_section(table, "通信效率（评分权重 25%）")
+    _add_metric(table, "agent I/O tokens（Agent通信文本token）",
+                summary.text_agent_io_tokens,
+                summary.protocol_agent_io_tokens)
+    _add_metric(table, "  avg tokens per message（每消息平均token）",
+                f"{summary.text_per_msg_avg_tokens:.2f}" if summary.text_per_msg_avg_tokens else "—",
+                f"{summary.protocol_per_msg_avg_tokens:.2f}" if summary.protocol_per_msg_avg_tokens else "—")
+    _add_metric(table, "wire bytes（传输字节）",
+                summary.text_wire_bytes,
+                summary.protocol_wire_bytes)
+    _add_metric(table, "  total protocol bytes（信封+payload+state）",
+                "",
+                summary.protocol_total_bytes)
+    table.add_row(
+        "[bold]token saving rate（token节省率）[/bold]",
+        f"[bold]{summary.token_saving_rate:.4f}[/bold]",
+        "",
+    )
+    table.add_row(
+        "[bold]wire bytes reduction rate（字节降低率）[/bold]",
+        f"[bold]{summary.wire_bytes_reduction_rate:.4f}[/bold]",
+        "",
+    )
+
+    _add_section(table, "状态传递（评分权重 20%）")
+    _add_metric(table, "state transfer bytes（状态传递总字节）",
+                "—",
+                summary.protocol_state_payload_bytes)
+    _add_metric(table, "state SHM transfers（共享内存传递）",
+                "—",
+                summary.state_shm_transfer_count)
+
+    _add_section(table, "记忆复用（评分权重 20%）")
+    _add_metric(table, "memory hit rate（记忆命中率）",
+                "—",
+                f"{summary.memory_hit_rate:.4f}")
+    _add_metric(table, "memory reused units（复用记忆条数）",
+                "—",
+                summary.memory_reused_unit_count)
+    _add_metric(table, "memory avg semantic（平均语义相似度）",
+                "—",
+                f"{summary.memory_avg_semantic_similarity:.4f}" if summary.memory_avg_semantic_similarity else "—")
+    table.add_row(
+        "[bold]quality preservation rate（质量保持率）[/bold]",
+        "1.0000",
+        f"[bold]{summary.quality_preservation_rate:.4f}[/bold]",
+    )
+
+    _add_section(table, "系统完整性（评分权重 20%）")
+    _add_metric(table, "feedback rounds（反馈优化轮次）",
+                "—",
+                summary.feedback_round_count)
+    _add_metric(table, "Rust core enabled runs（Rust加速运行数）",
+                "—",
+                summary.rust_core_enabled_runs)
+    table.add_row(
+        "[bold]latency reduction rate（耗时降低率）[/bold]",
+        f"[bold]{summary.latency_reduction_rate:.4f}[/bold]",
+        "",
+    )
+    console.print(table)
+
+
+def render_benchmark_progress(console: Console, event: BenchmarkProgressEvent) -> None:
+    if event.phase == "suite_start":
+        mode = "真实 LLM" if event.use_llm else "离线 no-llm"
+        console.print(
+            "[bold blue]benchmark started[/bold blue]: "
+            f"{event.suite_name}，共 {event.total_tasks} 条任务 / "
+            f"{event.total_stages} 个阶段，模式：{mode}"
+        )
+        return
+    if event.phase == "suite_complete":
+        console.print(
+            "[bold green]benchmark completed[/bold green]: "
+            f"{event.suite_name}，已完成 {event.total_tasks} 条任务 / "
+            f"{event.total_stages} 个阶段"
+        )
+        return
+    if event.phase != "mode_complete":
+        return
+    label = event.task_id or f"task-{event.current_task}"
+    topic = f"，topic={event.topic}" if event.topic else ""
+    group = f"，group={event.group}" if event.group else ""
+    console.print(
+        "[green]stage completed[/green]: "
+        f"[{event.current_stage}/{event.total_stages}] "
+        f"任务 {event.current_task}/{event.total_tasks} "
+        f"round {event.repeat_index}/{event.repeat_total} "
+        f"id={label}{group}{topic}，"
+        f"mode={event.mode}，latency={event.latency_ms}ms，"
+        f"tokens={event.tokens}，bytes={event.bytes}，trace={event.trace_id}"
+    )
+
+
+def render_benchmark_artifacts(
+    console: Console,
+    paths: RuntimePaths,
+    *,
+    report_path: Path | None = None,
+) -> None:
+    console.print("[bold]Benchmark output files[/bold]")
+    console.print(f"summary csv: {paths.benchmark_summary}")
+    console.print(f"detail jsonl: {paths.benchmark_detail}")
+    if report_path is not None:
+        console.print(f"experiment report: {report_path}")
 
 
 def render_memory(console: Console, results: list[MemoryUnit | MemorySearchResult]) -> None:

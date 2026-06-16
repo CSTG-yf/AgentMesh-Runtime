@@ -10,7 +10,12 @@ from agentmesh.core import rust_available, rust_core
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.scorer import MemoryScorer
 from agentmesh.memory.search import MemorySearchResult
-from agentmesh.state.embedding import EmbeddingEncoder, HashEmbeddingEncoder, cosine_similarity
+from agentmesh.state.embedding import (
+    EmbeddingEncoder,
+    HashEmbeddingEncoder,
+    cosine_similarity,
+    is_semantic_encoder,
+)
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import append_jsonl
 from agentmesh.storage.paths import RuntimePaths
@@ -123,21 +128,35 @@ class SQLiteMemoryStore:
         query_tags: list[str] | None = None,
         candidate_limit: int = 50,
     ) -> list[MemorySearchResult]:
+        scorer = MemoryScorer()
+        query_tags = query_tags or []
+        candidate_units = self._semantic_candidates(
+            query=query,
+            query_tags=query_tags,
+            candidate_limit=candidate_limit,
+        )
+        if not is_semantic_encoder(self.encoder):
+            return self._rank_by_fts_fallback(
+                candidates=candidate_units,
+                query=query,
+                query_tags=query_tags,
+                limit=limit,
+                scorer=scorer,
+            )
+        # ── Hybrid search: BM25 + semantic vector ──
         query_embedding = self.encoder.encode(query)
         units: list[MemoryUnit] = []
         vectors: list[list[float]] = []
-        candidate_units = self._semantic_candidates(
-            query=query,
-            query_tags=query_tags or [],
-            candidate_limit=candidate_limit,
-        )
-        for unit in candidate_units:
+        fts_rank: dict[str, int] = {}  # memory_id → FTS rank position
+        for rank_pos, unit in enumerate(candidate_units):
             vector = self._embedding_payload(unit)
             if vector is not None:
                 units.append(unit)
                 vectors.append(vector)
-        scorer = MemoryScorer()
+                fts_rank[unit.memory_id] = rank_pos
         max_reuse = max((unit.reuse_count for unit in units), default=0)
+
+        # Rust fast path
         if _rust_memory_rank_available() and vectors:
             ranked = rust_core().memory_rank_top_k(
                 query_embedding,
@@ -146,21 +165,31 @@ class SQLiteMemoryStore:
                 [unit.confidence for unit in units],
                 [_reuse_score(unit.reuse_count, max_reuse) for unit in units],
                 [scorer.recency_score(unit) for unit in units],
-                [scorer.tag_overlap_score(query_tags or [], unit.tags) for unit in units],
-                limit,
+                [scorer.tag_overlap_score(query_tags, unit.tags) for unit in units],
+                limit * 2,
             )
-            return [
-                _ranked_result_from_rust(
-                    unit=units[int(index)],
-                    score=float(score),
-                    semantic_similarity=float(semantic),
-                    scorer=scorer,
-                    query_tags=query_tags,
-                    max_reuse_count=max_reuse,
+            raw_results = []
+            for index, score, semantic in ranked:
+                unit = units[int(index)]
+                mid = unit.memory_id
+                fts_pos = fts_rank.get(mid)
+                fts_boost = max(0.0, 0.3 * (0.85 ** (fts_pos or 99))) if fts_pos is not None else 0.0
+                hybrid_score = min(1.0, 0.65 * score + 0.35 * (score + fts_boost))
+                raw_results.append(
+                    _ranked_result_from_rust(
+                        unit=unit,
+                        score=hybrid_score,
+                        semantic_similarity=float(semantic),
+                        scorer=scorer,
+                        query_tags=query_tags,
+                        max_reuse_count=max_reuse,
+                    )
                 )
-                for index, score, semantic in ranked
-            ]
-        similarities: dict[str, float] = {
+            raw_results.sort(key=lambda item: item.score, reverse=True)
+            return raw_results[:limit]
+
+        # Python vector cosine path
+        similarities = {
             unit.memory_id: cosine_similarity(query_embedding, vector)
             for unit, vector in zip(units, vectors, strict=True)
         }
@@ -177,24 +206,90 @@ class SQLiteMemoryStore:
                 key=lambda unit: similarities.get(unit.memory_id, 0.0),
                 reverse=True,
             )[:candidate_limit]
+
         results: list[MemorySearchResult] = []
         for unit in candidates:
             semantic = similarities.get(unit.memory_id, 0.0)
-            score, parts = scorer.rank_score(
+            mid = unit.memory_id
+            fts_pos = fts_rank.get(mid)
+            fts_boost = max(0.0, 0.3 * (0.85 ** (fts_pos or 99))) if fts_pos is not None else 0.0
+            base_score, parts = scorer.rank_score(
                 memory=unit,
                 semantic_similarity=semantic,
                 query_tags=query_tags,
                 max_reuse_count=max_reuse,
             )
+            hybrid_score = min(1.0, 0.65 * base_score + 0.35 * (base_score + fts_boost))
+            results.append(
+                MemorySearchResult(
+                    memory=unit,
+                    score=hybrid_score,
+                    semantic_similarity=semantic,
+                    reason=(
+                        f"hybrid: sem={semantic:.3f}, fts_boost={fts_boost:.3f}, "
+                        f"validity={unit.validity_score:.2f}, reuse={unit.reuse_count}"
+                    ),
+                    **parts,
+                )
+            )
+        results.sort(key=lambda item: item.score, reverse=True)
+        return results[:limit]
+
+    def _rank_by_fts_fallback(
+        self,
+        *,
+        candidates: list[MemoryUnit],
+        query: str,
+        query_tags: list[str] | None,
+        limit: int,
+        scorer: MemoryScorer,
+    ) -> list[MemorySearchResult]:
+        """Rank memory candidates using FTS relevance + tag overlap + recency.
+
+        Used when the encoder cannot produce meaningful semantic embeddings
+        (e.g. HashEmbeddingEncoder).  Cosine similarity is meaningless for
+        hash embeddings, so we rely on SQLite FTS5 BM25 as the primary
+        relevance signal, then boost by tag overlap and recency.
+
+        The score and semantic_similarity are calibrated to stay above the
+        retriever thresholds (semantic_similarity >= 0.60 and score >= 0.60
+        for tagged, non-tag-overlap queries) for top positions.
+        """
+        if not candidates:
+            return []
+        max_reuse = max((unit.reuse_count for unit in candidates), default=0)
+        results: list[MemorySearchResult] = []
+        for rank_pos, unit in enumerate(candidates):
+            # Decay by rank position: position 0 → 0.85, position 1 → ~0.75,
+            # position 2 → ~0.66, position 5 → ~0.45
+            base = max(0.25, 0.95 * (0.88 ** rank_pos))
+            tag_overlap = scorer.tag_overlap_score(query_tags or [], unit.tags)
+            recency = scorer.recency_score(unit)
+            reuse = _reuse_score(unit.reuse_count, max_reuse)
+            # Score is dominated by FTS position then boosted by metadata
+            score = (
+                0.55 * base
+                + 0.15 * tag_overlap
+                + 0.10 * unit.validity_score
+                + 0.10 * reuse
+                + 0.10 * recency
+            )
+            # Boost score when the candidate has been reused before (proven useful)
+            if unit.reuse_count > 0:
+                score = min(1.0, score + 0.05 * reuse)
             results.append(
                 MemorySearchResult(
                     memory=unit,
                     score=score,
+                    semantic_similarity=base,
+                    tag_overlap_score=tag_overlap,
+                    recency_score=recency,
+                    validity_score=unit.validity_score,
+                    reuse_score=reuse,
                     reason=(
-                        f"semantic={semantic:.3f}, validity={unit.validity_score:.2f}, "
-                        f"reuse={unit.reuse_count}"
+                        f"fts_rank={rank_pos + 1}, tag_overlap={tag_overlap:.2f}, "
+                        f"recency={recency:.2f}, validity={unit.validity_score:.2f}"
                     ),
-                    **parts,
                 )
             )
         results.sort(key=lambda item: item.score, reverse=True)

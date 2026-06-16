@@ -1,1 +1,0 @@
-Analyze the contest requirements for a multi-agent runtime that reduces communication overhead through structured protocol messages, state passing, and shared memory reuse.

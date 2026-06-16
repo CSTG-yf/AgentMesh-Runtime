@@ -1,0 +1,2 @@
+﻿Implement a Python function that sorts the list [9, 2, 7, 1, 5, 3, 8, 4, 6, 0] using insertion sort.
+Print the sorted result as a flat Python list.

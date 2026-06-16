@@ -1,53 +1,28 @@
-name: long_context_continuous_tasks
-repeat: 2
+﻿name: long_context_tasks
+repeat: 1
 tasks:
-  - id: LC-A1
+  - id: LC1
     group: A
-    topic: long context contest analysis
-    input_file: examples/tasks/long_context_A1.txt
-    tags: [long-context, requirements, protocol]
-  - id: LC-A2
+    topic: sort integer array
+    input_file: examples/tasks/long_context/LC1_sort.txt
+    tags: [chain, sort, code]
+  - id: LC2
     group: A
-    topic: long context runtime architecture
-    input_file: examples/tasks/long_context_A2.txt
-    tags: [long-context, architecture, state-transfer]
-  - id: LC-A3
+    topic: compute median
+    input_file: examples/tasks/long_context/LC2_median.txt
+    tags: [chain, compute, statistics]
+  - id: LC3
     group: A
-    topic: long context state lifecycle
-    input_file: examples/tasks/long_context_A3.txt
-    tags: [long-context, state, memory]
-  - id: LC-A4
+    topic: count above median
+    input_file: examples/tasks/long_context/LC3_count_above_median.txt
+    tags: [chain, count, compute]
+  - id: LC4
     group: A
-    topic: long context benchmark design
-    input_file: examples/tasks/long_context_A4.txt
-    tags: [long-context, benchmark, metrics]
-  - id: LC-A5
+    topic: find min max range
+    input_file: examples/tasks/long_context/LC4_min_max_range.txt
+    tags: [chain, analyze, statistics]
+  - id: LC5
     group: A
-    topic: long context final report
-    input_file: examples/tasks/long_context_A5.txt
-    tags: [long-context, report, protocol]
-  - id: LC-B1
-    group: B
-    topic: long context repository review
-    input_file: examples/tasks/long_context_B1.txt
-    tags: [long-context, code, review]
-  - id: LC-B2
-    group: B
-    topic: long context test planning
-    input_file: examples/tasks/long_context_B2.txt
-    tags: [long-context, tests, codeact]
-  - id: LC-B3
-    group: B
-    topic: long context bug triage
-    input_file: examples/tasks/long_context_B3.txt
-    tags: [long-context, bugfix, memory]
-  - id: LC-B4
-    group: B
-    topic: long context API documentation
-    input_file: examples/tasks/long_context_B4.txt
-    tags: [long-context, api, docs]
-  - id: LC-B5
-    group: B
-    topic: long context performance analysis
-    input_file: examples/tasks/long_context_B5.txt
-    tags: [long-context, performance, report]
+    topic: summarize chain results
+    input_file: examples/tasks/long_context/LC5_summary.txt
+    tags: [chain, report, summary]

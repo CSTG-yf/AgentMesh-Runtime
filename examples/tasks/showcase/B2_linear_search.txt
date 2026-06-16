@@ -1,0 +1,5 @@
+﻿Implement a linear search function in Python. Search for the target value 55 in the following unsorted list and print the index if found, or "not found" otherwise.
+
+The list is: [67, 12, 55, 34, 91, 25, 78, 42, 89, 10]
+
+Implement a function that takes a list and a target value, performs linear search, and returns the index. Print the result.

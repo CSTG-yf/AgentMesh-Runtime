@@ -1,9 +1,0 @@
-Task LC-B2: Plan tests for CodeAct, typed envelope, state transfer, and memory reuse.
-
-Context block: The test plan should include unit tests for AMP schema, typed envelope dictionary encoding, Rust/Python codec parity, StateStore payload persistence, MemoryUnit metadata, semantic search, CodeAct code generation fallback, sandbox result storage, CLI prompt comparison, and benchmark report generation. Integration tests should run both modes on the same prompt.
-
-Repeated evidence: A useful test suite proves the contest requirements instead of merely checking implementation details. It should show at least three agents, structured fields, handshake, capability discovery, protocol mapping, embedding state, shared memory, continuous tasks, benchmark metrics, and CodeAct execution. Repeating this checklist creates a long prompt that stresses full-text retransmission.
-
-Repeated evidence: A useful test suite proves the contest requirements instead of merely checking implementation details. It should show at least three agents, structured fields, handshake, capability discovery, protocol mapping, embedding state, shared memory, continuous tasks, benchmark metrics, and CodeAct execution. Repeating this checklist creates a long prompt that stresses full-text retransmission.
-
-Deliverable: produce a focused test matrix with exact behavior each test verifies.

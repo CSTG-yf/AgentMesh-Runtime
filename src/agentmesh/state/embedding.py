@@ -12,12 +12,27 @@ from agentmesh.core import rust_available, rust_core
 
 class EmbeddingEncoder(Protocol):
     dimensions: int
+    provider: str = "unknown"
 
     def encode(self, text: str) -> list[float]:
         raise NotImplementedError
 
 
+def is_semantic_encoder(encoder: object) -> bool:
+    """Return True if the encoder produces real semantic embeddings.
+
+    HashEmbeddingEncoder uses locality-sensitive hashing which cannot
+    capture semantic meaning — it returns near-random cosine similarities
+    for conceptually similar but lexically different text.
+    """
+    if isinstance(encoder, TEIEmbeddingEncoder):
+        return True
+    return False
+
+
 class HashEmbeddingEncoder:
+    provider = "hash"
+
     def __init__(self, dimensions: int = 384) -> None:
         self.dimensions = dimensions
 
@@ -88,6 +103,8 @@ def cosine_similarity(left: list[float], right: list[float]) -> float:
 
 
 class TEIEmbeddingEncoder:
+    provider = "tei"
+
     def __init__(
         self,
         *,

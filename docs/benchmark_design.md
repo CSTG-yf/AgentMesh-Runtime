@@ -27,8 +27,9 @@ agent to the next and must not use Rust Core, typed envelopes, StateRefs, embedd
 memory, sandbox execution, or hidden state processing. Rust optimizations may reduce
 serialization, indexing, state-transfer, and retrieval overhead only in Protocol Mode.
 
-For reproducible contest evaluation, benchmark runs should avoid project-local `.env` LLM
-settings unless explicitly evaluating the optional LLM-backed mode.
+Benchmark runs use project-local `.env` LLM settings by default, matching the interactive
+Agent path. For reproducible offline contest checks, pass `--no-llm` or call
+`run_benchmark(..., use_llm=False)`.
 
 ## Communication Accounting
 

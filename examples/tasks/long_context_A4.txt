@@ -1,9 +1,0 @@
-Task LC-A4: Design the benchmark methodology for repeated multi-agent collaboration.
-
-Context block: The benchmark must run Text Mode and Protocol Mode on the same tasks. It must report token saving rate, wire bytes reduction rate, latency reduction rate, memory hit rate, quality preservation rate, state transfer counts, state bytes, typed envelope bytes, payload bytes, and Rust Core availability. It should run at least ten continuous tasks and include two related groups.
-
-Repeated evidence: Text Mode is the baseline because it sends full accumulated text between agents. Protocol Mode is the candidate because it sends structured AMP messages, typed envelopes, and StateRefs. Shared memory is expected to increase hit rate as related tasks accumulate. Long-context tasks should exaggerate repeated text cost and demonstrate why StateRef handoff matters. This text repeats by design to create a measurable communication gap.
-
-Repeated evidence: Text Mode is the baseline because it sends full accumulated text between agents. Protocol Mode is the candidate because it sends structured AMP messages, typed envelopes, and StateRefs. Shared memory is expected to increase hit rate as related tasks accumulate. Long-context tasks should exaggerate repeated text cost and demonstrate why StateRef handoff matters. This text repeats by design to create a measurable communication gap.
-
-Deliverable: produce an experiment plan and expected interpretation of positive and negative metrics.

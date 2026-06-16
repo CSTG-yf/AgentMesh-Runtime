@@ -1,6 +1,7 @@
 import csv
 import shutil
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import yaml
@@ -22,6 +23,8 @@ class BenchmarkSummary(BaseModel):
     wire_bytes_reduction_rate: float
     text_agent_io_tokens: int = 0
     protocol_agent_io_tokens: int = 0
+    text_per_msg_avg_tokens: float = 0.0
+    protocol_per_msg_avg_tokens: float = 0.0
     text_agent_io_bytes: int = 0
     protocol_total_bytes: int = 0
     text_wire_bytes: int
@@ -54,7 +57,33 @@ class BenchmarkSummary(BaseModel):
     tool_feedback_count: int
 
 
-def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
+class BenchmarkProgressEvent(BaseModel):
+    phase: str
+    suite_name: str
+    total_tasks: int
+    total_stages: int
+    current_task: int = 0
+    current_stage: int = 0
+    repeat_index: int = 0
+    repeat_total: int = 0
+    task_id: str = ""
+    group: str = ""
+    topic: str = ""
+    mode: str = ""
+    trace_id: str = ""
+    latency_ms: int = 0
+    tokens: int = 0
+    bytes: int = 0
+    use_llm: bool = True
+
+
+def run_benchmark(
+    suite_path: Path,
+    paths: RuntimePaths,
+    *,
+    use_llm: bool = True,
+    progress_callback: Callable[[BenchmarkProgressEvent], None] | None = None,
+) -> BenchmarkSummary:
     suite = _load_suite(suite_path)
     if paths.latest_run.exists():
         shutil.rmtree(paths.latest_run)
@@ -63,8 +92,24 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
     tasks = suite.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         raise BenchmarkConfigError("Benchmark suite requires tasks")
+    suite_name = str(suite.get("name", suite_path.stem))
+    total_tasks = repeat * len(tasks)
+    total_stages = total_tasks * 2
+    _emit_progress(
+        progress_callback,
+        BenchmarkProgressEvent(
+            phase="suite_start",
+            suite_name=suite_name,
+            total_tasks=total_tasks,
+            total_stages=total_stages,
+            repeat_total=repeat,
+            use_llm=use_llm,
+        ),
+    )
     text_tokens = 0
     protocol_tokens = 0
+    text_msg_count = 0
+    protocol_msg_count = 0
     text_wire_bytes = 0
     protocol_wire_bytes = 0
     text_agent_io_bytes = 0
@@ -100,21 +145,54 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
     logical_runs = 0
 
     for _round in range(repeat):
-        for task in tasks:
+        for task_index, task in enumerate(tasks, start=1):
+            current_task = _round * len(tasks) + task_index
             input_file = paths.root / str(task["input_file"])
             text_result = run_text_mode(
                 task_path=input_file,
                 paths=paths,
-                load_configured_llm=False,
+                load_configured_llm=use_llm,
+            )
+            _emit_progress(
+                progress_callback,
+                _progress_event(
+                    suite_name=suite_name,
+                    total_tasks=total_tasks,
+                    total_stages=total_stages,
+                    current_task=current_task,
+                    current_stage=(current_task - 1) * 2 + 1,
+                    repeat_index=_round + 1,
+                    repeat_total=repeat,
+                    task=task,
+                    result=text_result,
+                    use_llm=use_llm,
+                ),
             )
             protocol_result = run_protocol_mode(
                 task_path=input_file,
                 paths=paths,
-                load_configured_llm=False,
+                load_configured_llm=use_llm,
+            )
+            _emit_progress(
+                progress_callback,
+                _progress_event(
+                    suite_name=suite_name,
+                    total_tasks=total_tasks,
+                    total_stages=total_stages,
+                    current_task=current_task,
+                    current_stage=current_task * 2,
+                    repeat_index=_round + 1,
+                    repeat_total=repeat,
+                    task=task,
+                    result=protocol_result,
+                    use_llm=use_llm,
+                ),
             )
             logical_runs += 1
             text_tokens += _token_metric(text_result.metrics)
             protocol_tokens += _token_metric(protocol_result.metrics)
+            text_msg_count += text_result.metrics.message_count
+            protocol_msg_count += protocol_result.metrics.message_count
             text_wire_bytes += text_result.metrics.wire_bytes
             protocol_wire_bytes += protocol_result.metrics.wire_bytes
             text_agent_io_bytes += text_result.metrics.agent_io_bytes
@@ -183,7 +261,7 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
                 )
 
     summary = BenchmarkSummary(
-        suite_name=str(suite.get("name", suite_path.stem)),
+        suite_name=suite_name,
         total_runs=logical_runs,
         token_estimator=TOKEN_ESTIMATOR,
         token_saving_rate=_rate(text_tokens, protocol_tokens),
@@ -193,6 +271,12 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
         ),
         text_agent_io_tokens=text_tokens,
         protocol_agent_io_tokens=protocol_tokens,
+        text_per_msg_avg_tokens=(
+            text_tokens / text_msg_count if text_msg_count else 0.0
+        ),
+        protocol_per_msg_avg_tokens=(
+            protocol_tokens / protocol_msg_count if protocol_msg_count else 0.0
+        ),
         text_agent_io_bytes=text_agent_io_bytes,
         protocol_total_bytes=protocol_total_bytes,
         text_wire_bytes=text_wire_bytes,
@@ -243,7 +327,62 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
         tool_feedback_count=tool_feedback_count,
     )
     _write_summary(paths.benchmark_summary, summary)
+    _emit_progress(
+        progress_callback,
+        BenchmarkProgressEvent(
+            phase="suite_complete",
+            suite_name=suite_name,
+            total_tasks=total_tasks,
+            total_stages=total_stages,
+            current_task=total_tasks,
+            current_stage=total_stages,
+            repeat_total=repeat,
+            use_llm=use_llm,
+        ),
+    )
     return summary
+
+
+def _emit_progress(
+    progress_callback: Callable[[BenchmarkProgressEvent], None] | None,
+    event: BenchmarkProgressEvent,
+) -> None:
+    if progress_callback is not None:
+        progress_callback(event)
+
+
+def _progress_event(
+    *,
+    suite_name: str,
+    total_tasks: int,
+    total_stages: int,
+    current_task: int,
+    current_stage: int,
+    repeat_index: int,
+    repeat_total: int,
+    task: dict[str, Any],
+    result: Any,
+    use_llm: bool,
+) -> BenchmarkProgressEvent:
+    return BenchmarkProgressEvent(
+        phase="mode_complete",
+        suite_name=suite_name,
+        total_tasks=total_tasks,
+        total_stages=total_stages,
+        current_task=current_task,
+        current_stage=current_stage,
+        repeat_index=repeat_index,
+        repeat_total=repeat_total,
+        task_id=str(task.get("id", "")),
+        group=str(task.get("group", "")),
+        topic=str(task.get("topic", "")),
+        mode=str(result.mode),
+        trace_id=str(result.trace_id),
+        latency_ms=result.metrics.latency_ms,
+        tokens=_token_metric(result.metrics),
+        bytes=_byte_metric(result.metrics),
+        use_llm=use_llm,
+    )
 
 
 def _load_suite(path: Path) -> dict[str, Any]:

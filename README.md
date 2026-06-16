@@ -28,7 +28,7 @@ Text Mode 是传统 baseline。Agent 按固定链路协作，每次 handoff 都�
 
 Protocol Mode 是 AgentMesh 方案。Agent 通过 AMP 结构化消息协作，payload 落入 StateStore，handoff 中主要传递 `state://...` 引用；运行时可使用 Typed Envelope、共享记忆、CodeAct、动态路由、反馈回合和可选 Rust Core。
 
-`agentmesh run`、`agentmesh compare` 和 shell `/compare` 默认加载 `.env` 中配置的 LLM；需要离线可复现实验时显式传 `--no-llm`。Benchmark 默认关闭 LLM，保证评测可复现。
+`agentmesh run`、`agentmesh compare`、`agentmesh benchmark` 和 shell `/compare`、`/benchmark` 默认加载 `.env` 中配置的 LLM；需要离线可复现实验时显式传 `--no-llm`。
 
 ## 架构设计
 
@@ -273,6 +273,9 @@ Shell 中直接输入一段消息，默认等同于 `/ask`，会走 Protocol Mod
 
 ```bash
 uv run agentmesh benchmark --suite examples/benchmarks/continuous_tasks.yaml
+
+# 离线可复现 benchmark
+uv run agentmesh benchmark --suite examples/benchmarks/continuous_tasks.yaml --no-llm
 uv run agentmesh report --run runs/latest
 ```
 
@@ -613,6 +616,6 @@ make all
 ## 当前边界
 
 - Socket transport 已有 frame 实现和测试基础，但默认运行仍使用 in-process transport。
-- `run`、`compare` 和 shell `/compare` 默认使用 LLM；Benchmark 默认关闭 LLM，主要衡量通信协议和状态传递机制。
+- `run`、`compare`、`benchmark` 和 shell `/compare`、`/benchmark` 默认使用 `.env` 中配置的 LLM；离线复现实验使用 `--no-llm`。
 - Sandbox 是轻量隔离和比赛原型，不等同于生产级容器、WASM 或硬隔离环境。
 - HashEmbedding 是可复现离线检索基线，真实语义效果建议接入 TEI 或后续 embedding 服务。

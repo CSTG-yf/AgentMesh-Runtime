@@ -1,0 +1,5 @@
+﻿Write a Python program to count word frequencies in the following text:
+
+"the quick brown fox jumps over the lazy dog the fox jumps over the lazy cat"
+
+Print each unique word followed by its count, one per line, sorted by frequency descending.

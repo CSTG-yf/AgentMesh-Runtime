@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from agentmesh.cli import _benchmark_suite_path
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.eval.report import generate_report
@@ -177,7 +178,7 @@ tasks:
     )
     paths = RuntimePaths(root=tmp_path)
 
-    summary = run_benchmark(suite_path=suite, paths=paths)
+    summary = run_benchmark(suite_path=suite, paths=paths, use_llm=False)
     report_path = generate_report(paths=paths)
 
     assert summary.total_runs == 10
@@ -216,7 +217,17 @@ tasks:
     assert len(read_jsonl(paths.benchmark_detail)) == 20
 
 
-def test_benchmark_disables_configured_llm_for_both_modes(
+def test_cli_benchmark_suite_aliases_resolve_to_builtin_suites(tmp_path: Path) -> None:
+    assert _benchmark_suite_path(tmp_path, Path("standard")) == (
+        tmp_path / "examples" / "benchmarks" / "continuous_tasks.yaml"
+    )
+    assert _benchmark_suite_path(tmp_path, Path("long")) == (
+        tmp_path / "examples" / "benchmarks" / "long_context_tasks.yaml"
+    )
+    assert _benchmark_suite_path(tmp_path, Path("custom.yaml")) == tmp_path / "custom.yaml"
+
+
+def test_benchmark_uses_configured_llm_for_both_modes_by_default(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -271,7 +282,125 @@ tasks:
 
     run_benchmark(suite_path=suite, paths=RuntimePaths(root=tmp_path))
 
+    assert calls == [("text", True), ("protocol", True)]
+
+
+def test_benchmark_can_disable_configured_llm_for_both_modes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Explain protocol memory reuse.", encoding="utf-8")
+    suite = tmp_path / "suite.yaml"
+    suite.write_text(
+        """
+name: tiny_suite
+tasks:
+  - id: T1
+    group: T
+    topic: protocol memory
+    input_file: task.txt
+""".strip(),
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, bool]] = []
+
+    def fake_text_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths
+        calls.append(("text", load_configured_llm))
+        return ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100),
+        )
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths
+        calls.append(("protocol", load_configured_llm))
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol",
+            metrics=RunMetrics(estimated_tokens=5, wire_bytes=50),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol_mode)
+
+    run_benchmark(suite_path=suite, paths=RuntimePaths(root=tmp_path), use_llm=False)
+
     assert calls == [("text", False), ("protocol", False)]
+
+
+def test_benchmark_reports_progress_for_each_task_stage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Explain protocol memory reuse.", encoding="utf-8")
+    suite = tmp_path / "suite.yaml"
+    suite.write_text(
+        """
+name: progress_suite
+repeat: 2
+tasks:
+  - id: T1
+    group: T
+    topic: protocol memory
+    input_file: task.txt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def fake_text_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100, latency_ms=11),
+        )
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol",
+            metrics=RunMetrics(estimated_tokens=5, wire_bytes=50, latency_ms=22),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol_mode)
+
+    events = []
+    summary = run_benchmark(
+        suite_path=suite,
+        paths=RuntimePaths(root=tmp_path),
+        use_llm=False,
+        progress_callback=events.append,
+    )
+
+    assert summary.total_runs == 2
+    assert [event.phase for event in events] == [
+        "suite_start",
+        "mode_complete",
+        "mode_complete",
+        "mode_complete",
+        "mode_complete",
+        "suite_complete",
+    ]
+    mode_events = [event for event in events if event.phase == "mode_complete"]
+    assert [(event.current_stage, event.current_task, event.mode) for event in mode_events] == [
+        (1, 1, "text"),
+        (2, 1, "protocol"),
+        (3, 2, "text"),
+        (4, 2, "protocol"),
+    ]
+    assert all(event.task_id == "T1" for event in mode_events)
+    assert mode_events[0].latency_ms == 11
+    assert mode_events[1].latency_ms == 22
 
 
 def test_benchmark_summarizes_memory_reuse_quality(
@@ -323,7 +452,7 @@ tasks:
     monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text_mode)
     monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol_mode)
 
-    summary = run_benchmark(suite_path=suite, paths=RuntimePaths(root=tmp_path))
+    summary = run_benchmark(suite_path=suite, paths=RuntimePaths(root=tmp_path), use_llm=False)
 
     assert summary.memory_avg_reused_units_per_query == 4.0
     assert summary.memory_avg_score == 0.7

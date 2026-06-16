@@ -1,0 +1,5 @@
+﻿Implement a binary search function in Python. Search for the target value 42 in a sorted array and print the index if found, or "not found" otherwise.
+
+The sorted array is: [12, 25, 34, 42, 55, 67, 78, 89, 91, 100]
+
+Implement a function that takes a sorted list and a target value, performs binary search, and returns the index. Print the result.

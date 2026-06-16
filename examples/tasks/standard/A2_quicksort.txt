@@ -1,0 +1,3 @@
+﻿Implement a quicksort function in Python with the Lomuto partition scheme.
+Sort the following list: [9, 2, 7, 1, 5, 3, 8, 4, 6, 0]
+Print only the sorted list as output.

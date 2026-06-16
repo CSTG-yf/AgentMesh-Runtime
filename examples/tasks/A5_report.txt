@@ -1,1 +1,0 @@
-Draft an experiment report comparing Text Mode and Protocol Mode on communication overhead, latency, state transfer, memory hits, and quality preservation.

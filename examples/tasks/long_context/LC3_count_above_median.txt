@@ -1,0 +1,3 @@
+﻿Using the sorted list and the median from prior steps:
+Count how many elements are strictly greater than the median and print that count.
+Also print the sum of those elements.
