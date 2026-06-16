@@ -304,7 +304,10 @@ def test_protocol_mode_invokes_executor_and_feedback_for_benchmark_task(
     tmp_path: Path,
 ) -> None:
     task = tmp_path / "benchmark.txt"
-    task.write_text("Run a benchmark, calculate protocol overhead, and validate results.", encoding="utf-8")
+    task.write_text(
+        "Run a benchmark, calculate protocol overhead, and validate results.",
+        encoding="utf-8",
+    )
     paths = RuntimePaths(root=tmp_path)
 
     result = run_protocol_mode(task, paths)

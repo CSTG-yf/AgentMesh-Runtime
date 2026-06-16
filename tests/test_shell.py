@@ -23,11 +23,11 @@ def test_shell_parser_routes_plain_text_to_ask() -> None:
 
 
 def test_shell_parser_handles_slash_command_arguments() -> None:
-    command = parse_shell_line('/compare --llm "涓枃澶?Agent 浠诲姟"')
+    command = parse_shell_line('/compare --llm "中文 Agent 任务"')
 
     assert command is not None
     assert command.name == "compare"
-    assert command.args == ["--llm", "涓枃澶?Agent 浠诲姟"]
+    assert command.args == ["--llm", "中文 Agent 任务"]
 
 
 def test_shell_help_and_config_do_not_fail(tmp_path) -> None:
@@ -84,9 +84,11 @@ def test_shell_compare_uses_llm_by_default_and_can_disable_it(
         token_saving_rate = 0.0
         wire_bytes_reduction_rate = 0.0
         latency_reduction_rate = 0.0
+        quality_preservation_rate = 1.0
+        memory_hit_rate = 0.0
 
     def fake_summary(prompt, paths, *, use_llm=True, progress_callback=None):
-        del progress_callback
+        del prompt, paths, progress_callback
         calls.append(use_llm)
         return FakeSummary()
 
@@ -107,7 +109,15 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
             mode="text",
             trace_id="trace-text",
             answer="text final answer",
-            metrics=RunMetrics(message_count=4, estimated_tokens=100, wire_bytes=1000),
+            metrics=RunMetrics(
+                message_count=4,
+                estimated_tokens=100,
+                wire_bytes=1000,
+                agent_io_tokens=120,
+                agent_io_bytes=1100,
+                per_msg_avg_tokens=30.0,
+                answer_quality_score=0.8,
+            ),
         ),
         protocol=ModeRunResult(
             mode="protocol",
@@ -117,6 +127,13 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
                 message_count=20,
                 estimated_tokens=20,
                 wire_bytes=400,
+                agent_io_tokens=60,
+                agent_io_bytes=500,
+                per_msg_avg_tokens=3.0,
+                protocol_total_bytes=900,
+                state_transfer_bytes=256,
+                stage_latency_ms={"planner": 10, "retriever": 5},
+                answer_quality_score=0.7,
                 memory_query_count=2,
                 memory_query_hit_count=1,
                 memory_reused_unit_count=3,
@@ -149,6 +166,7 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
         token_saving_rate=0.8,
         latency_reduction_rate=0.1,
         wire_bytes_reduction_rate=0.6,
+        quality_preservation_rate=0.875,
         memory_hit_rate=0.0,
     )
 
@@ -161,10 +179,17 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
     assert "protocol final answer" in rendered
     assert "text planner output" in rendered
     assert "protocol planner output" in rendered
-    assert "memory queries" in rendered
-    assert "memory query hits" in rendered
-    assert "memory reused units" in rendered
-    assert "memory avg semantic" in rendered
+    assert "messages（消息数）" in rendered
+    assert "agent I/O tokens（Agent 通信文本 token）" in rendered
+    assert "agent I/O bytes（Agent 通信字节）" in rendered
+    assert "state transfer bytes（状态传递字节数）" in rendered
+    assert "quality preservation rate（回答质量保持率）" in rendered
+    assert "Protocol Mode Latency Breakdown" in rendered
+    assert "planner" in rendered
+    assert "memory reused units（复用记忆条数）" in rendered
+    assert "memory avg semantic（平均语义相似度）" in rendered
+    assert "token_saving_rate（token 节省率）" in rendered
+    assert "memory avg tag overlap" not in rendered
 
 
 def test_render_memory_shows_semantic_score_and_vector_source_content() -> None:
@@ -400,6 +425,7 @@ def test_shell_ask_prints_protocol_answer_without_rich_markup_stripping(
     )
 
     def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
         return ModeRunResult(
             mode="protocol",
             trace_id="trace-shell-test",

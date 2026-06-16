@@ -17,6 +17,9 @@ target/
 # Runtime artifacts
 runs/
 data/
+.tmp-sandbox/
+/1.txt
+/generated_code.py
 
 # Local secrets
 .env

@@ -1,4 +1,4 @@
-from agentmesh.agents.state_refs import first_text_payload, read_state_payloads
+from agentmesh.agents.state_refs import first_text_payload
 from agentmesh.llm.client import ChatMessage
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.search import MemorySearchResult
@@ -25,12 +25,6 @@ class RetrieverAgent(BaseAgent):
         query = str(message.params.get("query", ""))
         if not query:
             query = first_text_payload(
-                context=context,
-                state_refs=message.state_refs,
-                consumer=self.name,
-            )
-        else:
-            read_state_payloads(
                 context=context,
                 state_refs=message.state_refs,
                 consumer=self.name,
@@ -66,7 +60,7 @@ class RetrieverAgent(BaseAgent):
         memory_hits = [_memory_hit_log_item(result) for result in memory_results]
         _append_memory_hit_log(
             context=context,
-            action=message.action,
+            action=message.action or "",
             query=query,
             query_tags=query_tags,
             memory_hits=memory_hits,
@@ -80,6 +74,9 @@ class RetrieverAgent(BaseAgent):
                 "semantic_similarity": round(float(result.semantic_similarity), 4),
                 "tag_overlap_score": round(float(result.tag_overlap_score), 4),
                 "reason": result.reason,
+                "reuse_hint": "This memory was reused from a similar prior task. "
+                              "Use its content directly as reference context "
+                              "instead of recomputing from scratch.",
             }
             for result in memory_results
         )
@@ -214,10 +211,18 @@ def _should_reuse_memory_result(
     tag_overlap_score: float,
     query_tags: list[str],
 ) -> bool:
+    """Strict filter: only return memory when it's clearly relevant.
+
+    Low-similarity results waste evidence bandwidth and confuse downstream
+    agents.  Thresholds are set to reject noise while keeping clearly useful
+    hits (e.g. "write a quicksort" hitting a prior quicksort record).
+    """
     if query_tags == ["general"]:
-        return semantic_similarity >= 0.20 and score >= 0.45
-    if tag_overlap_score > 0 and score >= 0.30:
+        return semantic_similarity >= 0.40 and score >= 0.55
+    if tag_overlap_score >= 0.5 and score >= 0.35:
         return True
+    if tag_overlap_score > 0 and score >= 0.35:
+        return semantic_similarity >= 0.20
     if query_tags and tag_overlap_score <= 0:
-        return semantic_similarity >= 0.55 and score >= 0.55
-    return semantic_similarity >= 0.25 and score >= 0.50
+        return semantic_similarity >= 0.60 and score >= 0.60
+    return semantic_similarity >= 0.45 and score >= 0.55

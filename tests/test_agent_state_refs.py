@@ -15,6 +15,12 @@ from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
 
+class InvalidExecutorLLM:
+    def complete(self, **kwargs: object) -> str:
+        del kwargs
+        return 'solution_md = """# DP solution\n## Code\n'
+
+
 def test_planner_reads_task_from_state_ref_when_params_are_empty(tmp_path: Path) -> None:
     paths = RuntimePaths(root=tmp_path)
     trace_id = "trace-state-planner"
@@ -141,6 +147,40 @@ def test_executor_reads_task_from_state_ref_for_codeact(tmp_path: Path) -> None:
     assert "'status': 'validated'" in result.result["codeact_code"]
     record, _ = StateStore(paths).get(task_ref)
     assert "executor" in record.consumers
+
+
+def test_executor_rejects_invalid_llm_code_before_codeact(tmp_path: Path) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    trace_id = "trace-invalid-executor-code"
+    state_store = StateStore(paths)
+    task_ref = state_store.put_text(
+        trace_id=trace_id,
+        producer="runtime",
+        text="Write a DP problem and create a solution file.",
+    )
+    context = RuntimeContext.from_paths(
+        paths=paths,
+        trace_id=trace_id,
+        llm_client=InvalidExecutorLLM(),
+        load_configured_llm=False,
+    )
+
+    result = ExecutorAgent().handle(
+        AMPMessage(
+            trace_id=trace_id,
+            source_agent="retriever",
+            target_agent="executor",
+            msg_type=MsgType.INVOKE,
+            action="tool.run_python",
+            params={},
+            state_refs=[task_ref],
+        ),
+        context,
+    )
+
+    assert 'solution_md = """' not in result.result["codeact_code"]
+    assert "'status': 'validated'" in result.result["codeact_code"]
+    assert result.result["llm_generated_code"] is False
 
 
 def test_protocol_mode_hands_off_task_by_state_ref_not_full_params(tmp_path: Path) -> None:

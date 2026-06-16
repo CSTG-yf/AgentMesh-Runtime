@@ -62,89 +62,138 @@ def render_compare(console: Console, summary: CompareSummary) -> None:
         )
     console.print(outputs)
 
-    table = Table(title="Text Mode vs Protocol Mode")
-    table.add_column("Metric")
-    table.add_column("Text")
-    table.add_column("Protocol")
-    table.add_row(
-        "messages",
-        str(summary.text.metrics.message_count),
-        str(summary.protocol.metrics.message_count),
+    table = Table(title="Text Mode vs Protocol Mode - 赛题关键指标", show_lines=True)
+    table.add_column("Metric / 指标说明", ratio=2)
+    table.add_column("Text", ratio=1)
+    table.add_column("Protocol", ratio=1)
+
+    _add_section(table, "通信效率（评分权重 25%）")
+    _add_metric(
+        table,
+        "messages（消息数）",
+        summary.text.metrics.message_count,
+        summary.protocol.metrics.message_count,
+    )
+    _add_metric(
+        table,
+        "agent I/O tokens（Agent 通信文本 token）",
+        summary.text.metrics.agent_io_tokens,
+        summary.protocol.metrics.agent_io_tokens,
+    )
+    _add_metric(
+        table,
+        "agent I/O bytes（Agent 通信字节）",
+        summary.text.metrics.agent_io_bytes,
+        summary.protocol.metrics.agent_io_bytes,
+    )
+    _add_metric(
+        table,
+        "avg tokens per message（每消息平均 token）",
+        _rate_text(summary.text.metrics.per_msg_avg_tokens),
+        _rate_text(summary.protocol.metrics.per_msg_avg_tokens),
+    )
+    _add_metric(
+        table,
+        "wire bytes（传输字节数）",
+        summary.text.metrics.wire_bytes,
+        summary.protocol.metrics.wire_bytes,
+    )
+    _add_metric(
+        table,
+        "protocol total bytes（信封 + payload + state）",
+        "",
+        summary.protocol.metrics.protocol_total_bytes,
     )
     table.add_row(
-        "estimated tokens",
-        str(summary.text.metrics.estimated_tokens),
-        str(summary.protocol.metrics.estimated_tokens),
+        "[bold]token_saving_rate（token 节省率）[/bold]",
+        f"[bold]{_rate_text(summary.token_saving_rate)}[/bold]",
+        "",
     )
     table.add_row(
-        "wire bytes",
-        str(summary.text.metrics.wire_bytes),
-        str(summary.protocol.metrics.wire_bytes),
+        "[bold]wire_bytes_reduction_rate（字节降低率）[/bold]",
+        f"[bold]{_rate_text(summary.wire_bytes_reduction_rate)}[/bold]",
+        "",
     )
-    table.add_row(
-        "latency ms",
-        str(summary.text.metrics.latency_ms),
-        str(summary.protocol.metrics.latency_ms),
+
+    _add_section(table, "状态传递（评分权重 20%）")
+    _add_metric(
+        table,
+        "state transfers（状态传递次数）",
+        summary.text.metrics.state_transfer_count,
+        summary.protocol.metrics.state_transfer_count,
     )
-    table.add_row(
-        "state transfers",
-        str(summary.text.metrics.state_transfer_count),
-        str(summary.protocol.metrics.state_transfer_count),
+    _add_metric(
+        table,
+        "state transfer bytes（状态传递字节数）",
+        summary.text.metrics.state_transfer_bytes,
+        summary.protocol.metrics.state_transfer_bytes,
     )
-    table.add_row(
-        "memory hit rate",
+
+    _add_section(table, "记忆复用（评分权重 20%）")
+    _add_metric(
+        table,
+        "memory queries（记忆查询次数）",
+        summary.text.metrics.memory_query_count,
+        summary.protocol.metrics.memory_query_count,
+    )
+    _add_metric(
+        table,
+        "memory hit rate（记忆命中率）",
         _rate_text(summary.text.metrics.memory_hit_rate),
         _rate_text(summary.protocol.metrics.memory_hit_rate),
     )
-    table.add_row(
-        "memory queries",
-        str(summary.text.metrics.memory_query_count),
-        str(summary.protocol.metrics.memory_query_count),
+    _add_metric(
+        table,
+        "memory reused units（复用记忆条数）",
+        summary.text.metrics.memory_reused_unit_count,
+        summary.protocol.metrics.memory_reused_unit_count,
     )
-    table.add_row(
-        "memory query hits",
-        str(summary.text.metrics.memory_query_hit_count),
-        str(
-            summary.protocol.metrics.memory_query_hit_count
-            or min(
-                summary.protocol.metrics.memory_hit_count,
-                summary.protocol.metrics.memory_query_count,
-            )
-        ),
-    )
-    table.add_row(
-        "memory reused units",
-        str(summary.text.metrics.memory_reused_unit_count),
-        str(summary.protocol.metrics.memory_reused_unit_count),
-    )
-    table.add_row(
-        "memory reused/query",
-        _avg_reused_units_text(summary.text.metrics),
-        _avg_reused_units_text(summary.protocol.metrics),
-    )
-    table.add_row(
-        "memory avg score",
-        _rate_text(summary.text.metrics.memory_avg_score),
-        _rate_text(summary.protocol.metrics.memory_avg_score),
-    )
-    table.add_row(
-        "memory avg semantic",
+    _add_metric(
+        table,
+        "memory avg semantic（平均语义相似度）",
         _rate_text(summary.text.metrics.memory_avg_semantic_similarity),
         _rate_text(summary.protocol.metrics.memory_avg_semantic_similarity),
     )
-    table.add_row(
-        "memory avg tag overlap",
-        _rate_text(summary.text.metrics.memory_avg_tag_overlap_score),
-        _rate_text(summary.protocol.metrics.memory_avg_tag_overlap_score),
+    _add_metric(
+        table,
+        "quality preservation rate（回答质量保持率）",
+        _rate_text(1.0),
+        _rate_text(summary.quality_preservation_rate),
     )
-    table.add_row("token_saving_rate", _rate_text(summary.token_saving_rate), "")
+
+    _add_section(table, "系统完整性（评分权重 20%）")
+    protocol_route = (
+        " -> ".join(summary.protocol.metrics.dynamic_route)
+        if summary.protocol.metrics.dynamic_route
+        else "-"
+    )
+    _add_metric(
+        table,
+        "agent route（执行链路）",
+        " -> ".join(summary.text.metrics.dynamic_route),
+        protocol_route,
+    )
+    _add_metric(
+        table,
+        "selected agents（已启用 Agent）",
+        ", ".join(summary.text.metrics.selected_agents),
+        ", ".join(summary.protocol.metrics.selected_agents),
+    )
+    _add_metric(
+        table,
+        "latency ms（总耗时）",
+        summary.text.metrics.latency_ms,
+        summary.protocol.metrics.latency_ms,
+    )
+    _add_metric(table, "stage breakdown（各阶段耗时）", "-", "[see below]")
     table.add_row(
-        "wire_bytes_reduction_rate",
-        _rate_text(summary.wire_bytes_reduction_rate),
+        "[bold]latency_reduction_rate（耗时降低率）[/bold]",
+        f"[bold]{_rate_text(summary.latency_reduction_rate)}[/bold]",
         "",
     )
-    table.add_row("latency_reduction_rate", _rate_text(summary.latency_reduction_rate), "")
+
     console.print(table)
+    _render_latency_breakdown(console, summary)
 
 
 def render_compare_progress(console: Console, event: CompareProgressEvent) -> None:
@@ -166,6 +215,21 @@ def render_compare_progress(console: Console, event: CompareProgressEvent) -> No
             border_style=border_style,
         )
     )
+
+
+def _render_latency_breakdown(console: Console, summary: CompareSummary) -> None:
+    stages = summary.protocol.metrics.stage_latency_ms
+    if not stages:
+        return
+    console.print("Protocol Mode Latency Breakdown")
+    table = Table(title="Protocol Mode Latency Breakdown")
+    table.add_column("Stage")
+    table.add_column("ms", justify="right")
+    table.add_column("%", justify="right")
+    total = summary.protocol.metrics.latency_ms or sum(stages.values()) or 1
+    for stage, ms in sorted(stages.items(), key=lambda item: item[1], reverse=True):
+        table.add_row(stage, str(ms), f"{ms / total * 100:.1f}%")
+    console.print(table)
 
 
 def render_benchmark(console: Console, summary: BenchmarkSummary) -> None:
@@ -285,3 +349,15 @@ def _avg_reused_units_text(metrics: Any) -> str:
     if metrics.memory_query_count == 0:
         return "0.0000"
     return f"{metrics.memory_reused_unit_count / metrics.memory_query_count:.4f}"
+
+
+def _add_section(table: Table, title: str) -> None:
+    table.add_row(f"[bold cyan]{title}[/bold cyan]", "", "")
+
+
+def _add_metric(table: Table, label: str, text_val: object, protocol_val: object) -> None:
+    table.add_row(
+        label,
+        str(text_val) if text_val is not None and str(text_val) else "-",
+        str(protocol_val) if protocol_val is not None and str(protocol_val) else "-",
+    )

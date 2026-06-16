@@ -29,7 +29,7 @@ from agentmesh.runtime.scheduler import ProtocolScheduler
 from agentmesh.sandbox.runner import SandboxResult, SandboxRunner
 from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.store import StateStore
-from agentmesh.storage.jsonl import append_jsonl
+from agentmesh.storage.jsonl import append_jsonl, read_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
 
@@ -181,7 +181,7 @@ def _run_protocol_mode_impl(
     planner_result = scheduler.invoke(
         source_agent="runtime",
         action="plan.create",
-        params={},
+        params={"task_chars": len(task)},
         state_refs=[task_ref, query_ref],
     )
     decision = _planner_decision(planner_result, task, context.capability_to_agent)
@@ -268,7 +268,7 @@ def _run_protocol_mode_impl(
         executor_result = scheduler.invoke(
             source_agent="retriever" if evidence_ref else "planner",
             action="tool.run_python",
-            params={},
+            params={"evidence_count": len(evidence)},
             state_refs=[ref for ref in [task_ref, evidence_ref] if ref],
         )
         mark_stage("executor", stage_start)
@@ -406,6 +406,8 @@ def _run_protocol_mode_impl(
         source_agent=summarizer_source,
         action="summary.create",
         params={
+            "evidence_count": len(evidence),
+            "code_result": code_result_summary,
             "tool_feedback": tool_feedback or {},
             "dynamic_route": scheduler.selected_agents,
         },
@@ -491,6 +493,10 @@ def _run_protocol_mode_impl(
     handoff_bytes = _handoff_wire_bytes(messages)
     state_records = state_store.list_by_trace(trace_id)
     state_transfer_bytes = sum(record.size_bytes for record in state_records)
+    agent_io_tokens, agent_io_bytes = _protocol_agent_io_stats(
+        paths=paths,
+        trace_id=trace_id,
+    )
     transport_stats = scheduler.transport_metrics()
     memory_quality = _memory_quality_from_evidence(evidence)
     mark_stage("artifact_write", stage_start)
@@ -498,9 +504,13 @@ def _run_protocol_mode_impl(
     metrics = RunMetrics(
         message_count=len(messages),
         text_chars=len(task),
-        estimated_tokens=estimate_tokens(task),
+        estimated_tokens=agent_io_tokens or estimate_tokens(task),
         communication_model="structured_state_ref",
         wire_bytes=typed_envelope_stats.wire_bytes,
+        agent_io_tokens=agent_io_tokens,
+        agent_io_bytes=agent_io_bytes,
+        per_msg_avg_tokens=(agent_io_tokens / len(messages) if messages else 0.0),
+        protocol_total_bytes=typed_envelope_stats.wire_bytes + state_transfer_bytes,
         structured_handoff_bytes=handoff_bytes,
         session_dictionary_bytes=typed_envelope_stats.session_dictionary_bytes,
         typed_envelope_bytes=typed_envelope_stats.typed_envelope_bytes,
@@ -520,7 +530,7 @@ def _run_protocol_mode_impl(
         state_shm_transfer_count=state_store.shm_transfer_count(trace_id),
         state_shm_transfer_bytes=state_store.shm_transfer_bytes(trace_id),
         memory_query_count=memory_query_count,
-        memory_hit_count=1 if memory_hits else 0,
+        memory_hit_count=len(memory_hits),
         memory_query_hit_count=1 if memory_hits else 0,
         memory_reused_unit_count=len(memory_hits),
         memory_avg_score=memory_quality["avg_score"],
@@ -762,10 +772,22 @@ def _handoff_wire_bytes(messages: list[AMPMessage]) -> int:
 
 def _evidence_digest(evidence: list[dict[str, Any]]) -> str:
     snippets: list[str] = []
+    has_memory_reuse = False
     for item in evidence[:5]:
         title = str(item.get("title", "evidence"))
         snippet = str(item.get("snippet", ""))[:240]
-        snippets.append(f"{title}: {snippet}")
+        reuse_hint = str(item.get("reuse_hint", ""))
+        if reuse_hint:
+            has_memory_reuse = True
+            snippets.append(f"{title} [记忆复用]: {snippet}")
+        else:
+            snippets.append(f"{title}: {snippet}")
+    if has_memory_reuse:
+        snippets.insert(
+            0,
+            "[MEMORY_REUSE_ACTIVE] The evidence below came from similar prior tasks. "
+            "Use it as a starting reference — adapt rather than recompute.",
+        )
     return "\n".join(snippets)
 
 
@@ -792,6 +814,59 @@ def _code_result_summary(payload: dict[str, Any]) -> str:
         f"stderr={stderr[:300] or '<empty>'}"
         f"{file_text}"
     )
+
+
+def _protocol_agent_io_stats(
+    *,
+    paths: RuntimePaths,
+    trace_id: str,
+) -> tuple[int, int]:
+    """Count tokens and bytes from actual agent I/O messages only.
+
+    Agents now receive their input via structured params (not by reading all
+    state refs), so we count only the JSON payloads exchanged between agents.
+    State ref payload sizes are tracked separately via state_transfer_bytes.
+    """
+    tokens = 0
+    byte_count = 0
+    for row in read_jsonl(paths.protocol_agent_io):
+        if str(row.get("trace_id", "")) != trace_id:
+            continue
+        input_payload = row.get("input")
+        output_payload = row.get("output")
+        tokens += estimate_tokens(_json_text_without_state_refs(input_payload))
+        tokens += estimate_tokens(_json_text_without_state_refs(output_payload))
+        byte_count += _json_size_without_state_refs(input_payload)
+        byte_count += _json_size_without_state_refs(output_payload)
+    return tokens, byte_count
+
+
+def _json_text_without_state_refs(value: object) -> str:
+    cleaned = _without_state_refs(value)
+    if cleaned in ({}, [], None):
+        return ""
+    return orjson.dumps(cleaned).decode("utf-8")
+
+
+def _json_size_without_state_refs(value: object) -> int:
+    cleaned = _without_state_refs(value)
+    if cleaned in ({}, [], None):
+        return 0
+    return len(orjson.dumps(cleaned))
+
+
+def _without_state_refs(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _without_state_refs(item)
+            for key, item in value.items()
+            if key not in {"state_refs", "state_refs_in", "state_refs_out"}
+        }
+    if isinstance(value, list):
+        return [_without_state_refs(item) for item in value]
+    return value
+
+
 
 
 def _write_generated_files(*, root: Path, files: object) -> list[dict[str, object]]:

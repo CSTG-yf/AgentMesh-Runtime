@@ -1,5 +1,6 @@
 import atexit
 import json
+import os
 import queue
 import subprocess
 import sys
@@ -116,6 +117,9 @@ class SandboxRunner:
                 cwd=sandbox_dir,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=_utf8_subprocess_env(),
                 timeout=self.limits.timeout_seconds,
                 check=False,
             )
@@ -143,6 +147,9 @@ class _WarmPythonWorker:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_utf8_subprocess_env(),
             bufsize=1,
         )
 
@@ -219,6 +226,13 @@ def _close_warm_workers() -> None:
 
 
 atexit.register(_close_warm_workers)
+
+
+def _utf8_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
 
 
 def _guarded_python_code(code: str) -> str:

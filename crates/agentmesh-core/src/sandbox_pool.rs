@@ -22,6 +22,8 @@ pub fn run_python_subprocess(
     let mut child = Command::new(python_executable)
         .arg(&script_path)
         .current_dir(&run_dir)
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUTF8", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

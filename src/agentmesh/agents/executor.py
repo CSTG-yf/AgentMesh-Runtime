@@ -1,4 +1,6 @@
-from agentmesh.agents.state_refs import first_text_payload, state_payloads_as_text
+import ast
+
+from agentmesh.agents.state_refs import first_text_payload
 from agentmesh.llm.client import ChatMessage
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
@@ -13,11 +15,6 @@ class ExecutorAgent(BaseAgent):
     def handle(self, message: AMPMessage, context: RuntimeContext) -> AMPMessage:
         task = str(message.params.get("task", ""))
         evidence = str(message.params.get("evidence", ""))
-        state_text = state_payloads_as_text(
-            context=context,
-            state_refs=message.state_refs,
-            consumer=self.name,
-        )
         if not task:
             task = first_text_payload(
                 context=context,
@@ -25,7 +22,11 @@ class ExecutorAgent(BaseAgent):
                 consumer=self.name,
             )
         if not evidence:
-            evidence = state_text
+            evidence = first_text_payload(
+                context=context,
+                state_refs=message.state_refs,
+                consumer=self.name,
+            )
         code_input = "\n".join(item for item in [task, evidence] if item)
         llm_code: str | None = None
         if context.llm_client is not None:
@@ -48,7 +49,13 @@ class ExecutorAgent(BaseAgent):
                 )
             except Exception:
                 llm_code = None
-        code = _extract_python_code(llm_code) or _deterministic_code(task, evidence)
+        extracted_code = _extract_python_code(llm_code)
+        code = (
+            extracted_code
+            if extracted_code is not None and _is_valid_python_code(extracted_code)
+            else _deterministic_code(task, evidence)
+        )
+        llm_code_used = extracted_code is not None and code == extracted_code
         generated_files = _generated_files_for_task(task, evidence, code)
         return AMPMessage(
             trace_id=context.trace_id,
@@ -60,7 +67,7 @@ class ExecutorAgent(BaseAgent):
                 "validated": True,
                 "state_refs_consumed": message.state_refs,
                 "codeact_code": code,
-                "llm_generated_code": llm_code is not None,
+                "llm_generated_code": llm_code_used,
                 "generated_files": generated_files,
             },
             state_refs=message.state_refs,
@@ -85,6 +92,14 @@ def _extract_python_code(text: str | None) -> str | None:
         if candidate:
             return candidate
     return None
+
+
+def _is_valid_python_code(code: str) -> bool:
+    try:
+        ast.parse(code)
+    except SyntaxError:
+        return False
+    return True
 
 
 def _deterministic_code(task: str, evidence: str) -> str:

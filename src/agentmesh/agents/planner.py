@@ -1,4 +1,4 @@
-from agentmesh.agents.state_refs import first_text_payload, read_state_payloads
+from agentmesh.agents.state_refs import first_text_payload
 from agentmesh.llm.client import ChatMessage
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
@@ -15,12 +15,6 @@ class PlannerAgent(BaseAgent):
         task = str(message.params.get("task", ""))
         if not task:
             task = first_text_payload(
-                context=context,
-                state_refs=message.state_refs,
-                consumer=self.name,
-            )
-        else:
-            read_state_payloads(
                 context=context,
                 state_refs=message.state_refs,
                 consumer=self.name,

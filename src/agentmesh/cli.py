@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from agentmesh.chat.session import ChatTurn, run_chat_turn
+from agentmesh.encoding import configure_utf8_environment
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.compare import run_prompt_compare
 from agentmesh.eval.report import generate_report
@@ -22,6 +23,8 @@ from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
+
+configure_utf8_environment()
 
 app = typer.Typer(help="AgentMesh Runtime CLI")
 memory_app = typer.Typer(help="Shared memory commands")
@@ -235,4 +238,4 @@ def trace_show(
 
 
 def _print_json(value: object) -> None:
-    console.print(json.dumps(value, ensure_ascii=True, indent=2), markup=False)
+    console.print(json.dumps(value, ensure_ascii=False, indent=2), markup=False)

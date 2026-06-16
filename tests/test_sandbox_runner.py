@@ -31,6 +31,20 @@ def test_sandbox_runner_captures_structured_result(tmp_path: Path) -> None:
     assert result.backend == "python"
 
 
+def test_sandbox_runner_preserves_chinese_stdout_with_python_backend(tmp_path: Path) -> None:
+    runner = SandboxRunner(
+        base_dir=tmp_path,
+        limits=SandboxLimits(timeout_seconds=2),
+        use_warm_worker=False,
+        use_rust=False,
+    )
+
+    result = runner.run_python("print('最长公共子序列 中文验证')")
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "最长公共子序列 中文验证"
+
+
 def test_sandbox_runner_resolves_relative_base_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -126,6 +140,21 @@ def test_rust_sandbox_subprocess_captures_result(tmp_path: Path) -> None:
 
 
 @requires_rust_core
+def test_rust_sandbox_subprocess_preserves_chinese_stdout(tmp_path: Path) -> None:
+    stdout, stderr, exit_code, _latency_ms = rust_core().run_python_subprocess(
+        sys.executable,
+        "print('最长公共子序列 中文验证')",
+        str(tmp_path),
+        2_000,
+        8_000,
+    )
+
+    assert exit_code == 0
+    assert stdout.strip() == "最长公共子序列 中文验证"
+    assert stderr == ""
+
+
+@requires_rust_core
 def test_rust_sandbox_subprocess_times_out(tmp_path: Path) -> None:
     with pytest.raises(TimeoutError):
         rust_core().run_python_subprocess(
@@ -145,6 +174,17 @@ def test_sandbox_runner_uses_rust_backend_by_default(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "rust backend"
+    assert result.backend == "rust"
+
+
+@requires_rust_core
+def test_sandbox_runner_preserves_chinese_stdout_with_rust_backend(tmp_path: Path) -> None:
+    runner = SandboxRunner(base_dir=tmp_path, limits=SandboxLimits(timeout_seconds=2))
+
+    result = runner.run_python("print('最长公共子序列 中文验证')")
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "最长公共子序列 中文验证"
     assert result.backend == "rust"
 
 

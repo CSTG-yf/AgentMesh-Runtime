@@ -43,6 +43,8 @@ def run_text_mode(
     context = task
     final_response = ""
     text_wire_bytes = 0
+    agent_io_tokens = 0
+    agent_io_bytes = 0
     agents: list[str] = ["planner"]
     selected_agents: list[str] = []
     index = 0
@@ -63,6 +65,8 @@ def run_text_mode(
             )
         target = agents[index + 1] if index + 1 < len(agents) else "runtime"
         text_wire_bytes += len(context.encode("utf-8"))
+        agent_io_tokens += estimate_tokens(context) + estimate_tokens(response)
+        agent_io_bytes += len(context.encode("utf-8")) + len(response.encode("utf-8"))
         append_jsonl(
             paths.text_messages,
             {
@@ -95,6 +99,9 @@ def run_text_mode(
         communication_model="plain_text",
         wire_bytes=text_wire_bytes,
         text_wire_bytes=text_wire_bytes,
+        agent_io_tokens=agent_io_tokens,
+        agent_io_bytes=agent_io_bytes,
+        per_msg_avg_tokens=(agent_io_tokens / len(agents) if agents else 0.0),
         latency_ms=latency_ms,
         answer_quality_score=deterministic_quality_score(answer),
         dynamic_route=selected_agents,

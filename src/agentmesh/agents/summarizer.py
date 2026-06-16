@@ -1,5 +1,3 @@
-import orjson
-
 from agentmesh.agents.state_refs import first_code_result_text, state_payloads_as_text
 from agentmesh.llm.client import ChatMessage
 from agentmesh.protocol.enums import MsgType
@@ -14,21 +12,38 @@ class SummarizerAgent(BaseAgent):
 
     def handle(self, message: AMPMessage, context: RuntimeContext) -> AMPMessage:
         llm_summary: str | None = None
-        code_result = str(message.params.get("code_result", ""))
+
+        # Use structured params from orchestrator first — avoids reading all 6+ state refs
+        task = str(message.params.get("task", "") or "")
+        evidence_digest = str(message.params.get("evidence_digest", "") or "")
+        code_result = str(message.params.get("code_result", "") or "")
+
         if not code_result:
             code_result = first_code_result_text(
                 context=context,
                 state_refs=message.state_refs,
                 consumer=self.name,
             )
-        state_context = message.params.get("state_context")
-        input_text = _state_context_text(state_context) or state_payloads_as_text(
-            context=context,
-            state_refs=message.state_refs,
-            consumer=self.name,
-        )
-        if code_result:
-            input_text = f"{input_text}\n\nCodeAct result:\n{code_result}"
+
+        # Assemble compact input from structured params; fall back to state_payloads
+        # only when no param was provided by the orchestrator.
+        if task or evidence_digest or code_result:
+            input_parts = []
+            if task:
+                input_parts.append(f"Task:\n{task}")
+            if evidence_digest:
+                input_parts.append(f"Evidence:\n{evidence_digest}")
+            if code_result:
+                input_parts.append(f"CodeAct result:\n{code_result}")
+            input_text = "\n\n".join(input_parts)
+        else:
+            input_text = state_payloads_as_text(
+                context=context,
+                state_refs=message.state_refs,
+                consumer=self.name,
+            )
+            if code_result:
+                input_text = f"{input_text}\n\nCodeAct result:\n{code_result}"
         summary = (
             "AgentMesh Runtime completed a deterministic collaboration step. "
             f"{code_result}".strip()
@@ -61,9 +76,3 @@ class SummarizerAgent(BaseAgent):
             result={"summary": summary, "llm_summary": llm_summary},
             state_refs=message.state_refs,
         )
-
-
-def _state_context_text(value: object) -> str:
-    if not isinstance(value, dict):
-        return ""
-    return orjson.dumps(value, option=orjson.OPT_INDENT_2).decode("utf-8")

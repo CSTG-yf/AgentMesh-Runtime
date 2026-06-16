@@ -7,7 +7,7 @@ import yaml
 from pydantic import BaseModel
 
 from agentmesh.errors import BenchmarkConfigError
-from agentmesh.eval.metrics import TOKEN_ESTIMATOR
+from agentmesh.eval.metrics import TOKEN_ESTIMATOR, RunMetrics
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.storage.jsonl import append_jsonl
@@ -20,6 +20,10 @@ class BenchmarkSummary(BaseModel):
     token_estimator: str
     token_saving_rate: float
     wire_bytes_reduction_rate: float
+    text_agent_io_tokens: int = 0
+    protocol_agent_io_tokens: int = 0
+    text_agent_io_bytes: int = 0
+    protocol_total_bytes: int = 0
     text_wire_bytes: int
     protocol_wire_bytes: int
     protocol_session_dictionary_bytes: int
@@ -63,6 +67,8 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
     protocol_tokens = 0
     text_wire_bytes = 0
     protocol_wire_bytes = 0
+    text_agent_io_bytes = 0
+    protocol_total_bytes = 0
     protocol_session_dictionary_bytes = 0
     protocol_typed_envelope_bytes = 0
     protocol_typed_payload_bytes = 0
@@ -107,10 +113,12 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
                 load_configured_llm=False,
             )
             logical_runs += 1
-            text_tokens += text_result.metrics.estimated_tokens
-            protocol_tokens += protocol_result.metrics.estimated_tokens
+            text_tokens += _token_metric(text_result.metrics)
+            protocol_tokens += _token_metric(protocol_result.metrics)
             text_wire_bytes += text_result.metrics.wire_bytes
             protocol_wire_bytes += protocol_result.metrics.wire_bytes
+            text_agent_io_bytes += text_result.metrics.agent_io_bytes
+            protocol_total_bytes += _byte_metric(protocol_result.metrics)
             protocol_session_dictionary_bytes += (
                 protocol_result.metrics.session_dictionary_bytes
             )
@@ -179,7 +187,14 @@ def run_benchmark(suite_path: Path, paths: RuntimePaths) -> BenchmarkSummary:
         total_runs=logical_runs,
         token_estimator=TOKEN_ESTIMATOR,
         token_saving_rate=_rate(text_tokens, protocol_tokens),
-        wire_bytes_reduction_rate=_rate(text_wire_bytes, protocol_wire_bytes),
+        wire_bytes_reduction_rate=_rate(
+            text_agent_io_bytes or text_wire_bytes,
+            protocol_total_bytes or protocol_wire_bytes,
+        ),
+        text_agent_io_tokens=text_tokens,
+        protocol_agent_io_tokens=protocol_tokens,
+        text_agent_io_bytes=text_agent_io_bytes,
+        protocol_total_bytes=protocol_total_bytes,
         text_wire_bytes=text_wire_bytes,
         protocol_wire_bytes=protocol_wire_bytes,
         protocol_session_dictionary_bytes=protocol_session_dictionary_bytes,
@@ -244,6 +259,14 @@ def _rate(baseline: int, candidate: int) -> float:
     if baseline <= 0:
         return 0.0
     return (baseline - candidate) / baseline
+
+
+def _token_metric(metrics: RunMetrics) -> int:
+    return metrics.agent_io_tokens or metrics.estimated_tokens
+
+
+def _byte_metric(metrics: RunMetrics) -> int:
+    return metrics.protocol_total_bytes or metrics.agent_io_bytes or metrics.wire_bytes
 
 
 def _write_summary(path: Path, summary: BenchmarkSummary) -> None:

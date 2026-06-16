@@ -9,7 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from agentmesh.eval.benchmark import _rate
-from agentmesh.eval.metrics import ModeRunResult
+from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.storage.jsonl import read_jsonl
@@ -47,6 +47,7 @@ class CompareSummary(BaseModel):
     token_saving_rate: float
     latency_reduction_rate: float
     wire_bytes_reduction_rate: float
+    quality_preservation_rate: float = 1.0
     memory_hit_rate: float
     memory_query_count: int = 0
     memory_query_hit_count: int = 0
@@ -268,16 +269,20 @@ def _build_summary(
             trace_id=protocol_result.trace_id,
         ),
         token_saving_rate=_rate(
-            text_result.metrics.estimated_tokens,
-            protocol_result.metrics.estimated_tokens,
+            _token_metric(text_result.metrics),
+            _token_metric(protocol_result.metrics),
         ),
         latency_reduction_rate=_rate(
             text_result.metrics.latency_ms,
             protocol_result.metrics.latency_ms,
         ),
         wire_bytes_reduction_rate=_rate(
-            text_result.metrics.wire_bytes,
-            protocol_result.metrics.wire_bytes,
+            _byte_metric(text_result.metrics),
+            _byte_metric(protocol_result.metrics),
+        ),
+        quality_preservation_rate=_quality_preservation_rate(
+            text_result.metrics,
+            protocol_result.metrics,
         ),
         memory_hit_rate=protocol_result.metrics.memory_hit_rate,
         memory_query_count=protocol_result.metrics.memory_query_count,
@@ -299,6 +304,20 @@ def _build_summary(
         memory_avg_semantic_similarity=protocol_result.metrics.memory_avg_semantic_similarity,
         memory_avg_tag_overlap_score=protocol_result.metrics.memory_avg_tag_overlap_score,
     )
+
+
+def _token_metric(metrics: RunMetrics) -> int:
+    return metrics.agent_io_tokens or metrics.estimated_tokens
+
+
+def _byte_metric(metrics: RunMetrics) -> int:
+    return metrics.protocol_total_bytes or metrics.agent_io_bytes or metrics.wire_bytes
+
+
+def _quality_preservation_rate(text_metrics: RunMetrics, protocol_metrics: RunMetrics) -> float:
+    if text_metrics.answer_quality_score <= 0:
+        return 1.0
+    return round(protocol_metrics.answer_quality_score / text_metrics.answer_quality_score, 4)
 
 
 def _emit_new_agent_outputs(

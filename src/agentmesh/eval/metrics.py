@@ -11,6 +11,10 @@ class RunMetrics(BaseModel):
     communication_model: str = ""
     wire_bytes: int = 0
     text_wire_bytes: int = 0
+    agent_io_tokens: int = 0
+    agent_io_bytes: int = 0
+    per_msg_avg_tokens: float = 0.0
+    protocol_total_bytes: int = 0
     structured_handoff_bytes: int = 0
     session_dictionary_bytes: int = 0
     typed_envelope_bytes: int = 0

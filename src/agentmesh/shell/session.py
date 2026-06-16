@@ -15,6 +15,8 @@ from agentmesh.eval.compare import run_prompt_compare, run_protocol_with_progres
 from agentmesh.eval.report import generate_report
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.maintenance import MemoryMaintenanceConfig, MemoryMaintenanceWorker
+from agentmesh.memory.schema import MemoryUnit
+from agentmesh.memory.search import MemorySearchResult
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.runtime.registry import RuntimeContext
@@ -199,12 +201,13 @@ class ShellSession:
             state_store=self.state_store,
             encoder=self.embedding_encoder,
         )
+        results: list[MemoryUnit | MemorySearchResult] = []
         if args[0] == "--keyword":
-            results = store.keyword_search(query)
+            results.extend(store.keyword_search(query))
         elif args[0] == "--tag":
-            results = store.tag_search(query)
+            results.extend(store.tag_search(query))
         else:
-            results = store.semantic_search_with_scores(query)
+            results.extend(store.semantic_search_with_scores(query))
         render_memory(self.console, results)
 
     def _trace(self, args: list[str]) -> None:
