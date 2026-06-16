@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from pydantic import BaseModel, ConfigDict
 
@@ -93,16 +94,32 @@ class RuntimePaths(BaseModel):
         return self.latest_run / "memory_maintenance.jsonl"
 
     @property
+    def benchmark_dir(self) -> Path:
+        return self.latest_run / "benchmarks"
+
+    def benchmark_suite_dir(self, suite_name: str) -> Path:
+        return self.benchmark_dir / _slugify_path_name(suite_name)
+
+    @property
     def benchmark_summary(self) -> Path:
         return self.latest_run / "benchmark_summary.csv"
+
+    def benchmark_suite_summary(self, suite_name: str) -> Path:
+        return self.benchmark_suite_dir(suite_name) / "benchmark_summary.csv"
 
     @property
     def benchmark_detail(self) -> Path:
         return self.latest_run / "benchmark_detail.jsonl"
 
+    def benchmark_suite_detail(self, suite_name: str) -> Path:
+        return self.benchmark_suite_dir(suite_name) / "benchmark_detail.jsonl"
+
     @property
     def experiment_report(self) -> Path:
         return self.latest_run / "experiment_report.md"
+
+    def benchmark_suite_report(self, suite_name: str) -> Path:
+        return self.benchmark_suite_dir(suite_name) / "experiment_report.md"
 
     @classmethod
     def cwd(cls) -> "RuntimePaths":
@@ -116,3 +133,8 @@ class RuntimePaths(BaseModel):
             self.sandbox_dir,
         ]:
             path.mkdir(parents=True, exist_ok=True)
+
+
+def _slugify_path_name(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    return slug.strip("._") or "benchmark"

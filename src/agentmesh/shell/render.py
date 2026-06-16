@@ -29,6 +29,7 @@ def render_help(console: Console) -> None:
         ("/run", "/run text|protocol <task-file>", "运行指定模式"),
         ("/benchmark", "/benchmark [--no-llm] standard", "运行标准评测套件，覆盖常规连续任务"),
         ("/benchmark", "/benchmark [--no-llm] long", "运行长上下文评测套件，观察状态复用和长任务开销"),
+        ("/benchmark", "/benchmark [--no-llm] showcase", "运行展示型 A/B/C 套件，包含 warm reuse 与 cold baseline"),
         ("/benchmark", "/benchmark [--no-llm] <suite.yaml>", "运行自定义 YAML 评测套件"),
         ("/memory", "/memory --keyword|--tag|--semantic <query>", "检索共享记忆"),
         ("/trace", "/trace [limit]", "查看最近通信 trace"),
@@ -310,14 +311,25 @@ def render_benchmark_progress(console: Console, event: BenchmarkProgressEvent) -
         console.print(
             "[bold blue]benchmark started[/bold blue]: "
             f"{event.suite_name}，共 {event.total_tasks} 条任务 / "
-            f"{event.total_stages} 个阶段，模式：{mode}"
+            f"{event.total_stages} 个阶段，模式：{mode}",
+            soft_wrap=True,
         )
         return
     if event.phase == "suite_complete":
         console.print(
             "[bold green]benchmark completed[/bold green]: "
             f"{event.suite_name}，已完成 {event.total_tasks} 条任务 / "
-            f"{event.total_stages} 个阶段"
+            f"{event.total_stages} 个阶段",
+            soft_wrap=True,
+        )
+        return
+    if event.phase == "cold_start":
+        label = event.task_id or f"task-{event.current_task}"
+        console.print(
+            "[yellow]memory reset[/yellow]: "
+            f"任务 {event.current_task}/{event.total_tasks} id={label} "
+            "启用 cold_start，已清空本次 run 的记忆库",
+            soft_wrap=True,
         )
         return
     if event.phase != "mode_complete":
@@ -325,14 +337,18 @@ def render_benchmark_progress(console: Console, event: BenchmarkProgressEvent) -
     label = event.task_id or f"task-{event.current_task}"
     topic = f"，topic={event.topic}" if event.topic else ""
     group = f"，group={event.group}" if event.group else ""
+    depends_on = f"，depends_on={','.join(event.depends_on)}" if event.depends_on else ""
+    tags = f"，tags={','.join(event.tags)}" if event.tags else ""
+    cold_start = "，cold_start=true" if event.cold_start else ""
     console.print(
         "[green]stage completed[/green]: "
         f"[{event.current_stage}/{event.total_stages}] "
         f"任务 {event.current_task}/{event.total_tasks} "
         f"round {event.repeat_index}/{event.repeat_total} "
-        f"id={label}{group}{topic}，"
+        f"id={label}{group}{topic}{depends_on}{tags}{cold_start}，"
         f"mode={event.mode}，latency={event.latency_ms}ms，"
-        f"tokens={event.tokens}，bytes={event.bytes}，trace={event.trace_id}"
+        f"tokens={event.tokens}，bytes={event.bytes}，trace={event.trace_id}",
+        soft_wrap=True,
     )
 
 
@@ -340,13 +356,20 @@ def render_benchmark_artifacts(
     console: Console,
     paths: RuntimePaths,
     *,
+    suite_name: str,
     report_path: Path | None = None,
 ) -> None:
     console.print("[bold]Benchmark output files[/bold]")
-    console.print(f"summary csv: {paths.benchmark_summary}")
-    console.print(f"detail jsonl: {paths.benchmark_detail}")
+    console.print(
+        f"summary csv: {paths.benchmark_suite_summary(suite_name).resolve()}",
+        soft_wrap=True,
+    )
+    console.print(
+        f"detail jsonl: {paths.benchmark_suite_detail(suite_name).resolve()}",
+        soft_wrap=True,
+    )
     if report_path is not None:
-        console.print(f"experiment report: {report_path}")
+        console.print(f"experiment report: {report_path.resolve()}", soft_wrap=True)
 
 
 def render_memory(console: Console, results: list[MemoryUnit | MemorySearchResult]) -> None:

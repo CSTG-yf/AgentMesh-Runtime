@@ -15,9 +15,22 @@ Tracked metrics:
 
 Generated artifacts:
 
-- `runs/latest/benchmark_summary.csv`
-- `runs/latest/benchmark_detail.jsonl`
-- `runs/latest/experiment_report.md`
+- `runs/latest/benchmarks/<suite_name>/benchmark_summary.csv`
+- `runs/latest/benchmarks/<suite_name>/benchmark_detail.jsonl`
+- `runs/latest/benchmarks/<suite_name>/experiment_report.md`
+
+Each benchmark suite owns its artifact directory. Running `standard`, `long`, and `showcase`
+updates only that suite's directory instead of overwriting the other benchmark reports.
+
+Report format:
+
+- `# AgentMesh Runtime Experiment Report`
+- `## Metrics`
+- `## Protocol Log Sample`
+- `## Text Agent I/O Sample`
+- `## Protocol Agent I/O Sample`
+- `## StateRef Sample`
+- `## MemoryUnit Sample`
 
 ## Fairness Rules
 

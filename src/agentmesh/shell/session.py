@@ -191,7 +191,7 @@ class ShellSession:
             use_llm = False
             args = [arg for arg in args if arg != "--no-llm"]
         if len(args) != 1:
-            self.console.print("[red]Usage:[/red] /benchmark [--no-llm] standard|long|<suite.yaml>")
+            self.console.print("[red]Usage:[/red] /benchmark [--no-llm] standard|long|showcase|<suite.yaml>")
             return
         suite = _suite_path(self.paths.root, args[0])
         summary = run_benchmark(
@@ -201,8 +201,13 @@ class ShellSession:
             progress_callback=lambda event: render_benchmark_progress(self.console, event),
         )
         render_benchmark(self.console, summary)
-        report_path = generate_report(self.paths)
-        render_benchmark_artifacts(self.console, self.paths, report_path=report_path)
+        report_path = generate_report(self.paths, suite_name=summary.suite_name)
+        render_benchmark_artifacts(
+            self.console,
+            self.paths,
+            suite_name=summary.suite_name,
+            report_path=report_path,
+        )
 
     def _memory(self, args: list[str]) -> None:
         if len(args) < 2 or args[0] not in {"--keyword", "--tag", "--semantic"}:

@@ -179,7 +179,7 @@ tasks:
     paths = RuntimePaths(root=tmp_path)
 
     summary = run_benchmark(suite_path=suite, paths=paths, use_llm=False)
-    report_path = generate_report(paths=paths)
+    report_path = generate_report(paths=paths, suite_name=summary.suite_name)
 
     assert summary.total_runs == 10
     assert summary.token_estimator == "mixed_cjk"
@@ -197,8 +197,8 @@ tasks:
     assert summary.wire_bytes_reduction_rate != 0
     assert 0.0 <= summary.memory_hit_rate <= 1.0
     assert summary.memory_reused_unit_count >= 0
-    assert paths.benchmark_summary.exists()
-    assert paths.benchmark_detail.exists()
+    assert paths.benchmark_suite_summary("tiny_suite").exists()
+    assert paths.benchmark_suite_detail("tiny_suite").exists()
     assert report_path.exists()
     report_text = report_path.read_text(encoding="utf-8")
     assert "TokenEstimator" in report_text
@@ -214,7 +214,7 @@ tasks:
     assert "LatestDynamicRoute" in report_text
     assert "Text Agent I/O Sample" in report_text
     assert "Protocol Agent I/O Sample" in report_text
-    assert len(read_jsonl(paths.benchmark_detail)) == 20
+    assert len(read_jsonl(paths.benchmark_suite_detail("tiny_suite"))) == 20
 
 
 def test_cli_benchmark_suite_aliases_resolve_to_builtin_suites(tmp_path: Path) -> None:
@@ -224,7 +224,63 @@ def test_cli_benchmark_suite_aliases_resolve_to_builtin_suites(tmp_path: Path) -
     assert _benchmark_suite_path(tmp_path, Path("long")) == (
         tmp_path / "examples" / "benchmarks" / "long_context_tasks.yaml"
     )
+    assert _benchmark_suite_path(tmp_path, Path("showcase")) == (
+        tmp_path / "examples" / "benchmarks" / "showcase_benchmark.yaml"
+    )
     assert _benchmark_suite_path(tmp_path, Path("custom.yaml")) == tmp_path / "custom.yaml"
+
+
+def test_benchmark_reports_are_scoped_per_suite(tmp_path: Path, monkeypatch) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Explain protocol memory reuse.", encoding="utf-8")
+    suite_a = tmp_path / "suite_a.yaml"
+    suite_b = tmp_path / "suite_b.yaml"
+    for suite, name in [(suite_a, "suite_a"), (suite_b, "suite_b")]:
+        suite.write_text(
+            f"""
+name: {name}
+tasks:
+  - id: T1
+    group: T
+    topic: protocol memory
+    input_file: task.txt
+""".strip(),
+            encoding="utf-8",
+        )
+
+    def fake_text_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100),
+        )
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol",
+            metrics=RunMetrics(estimated_tokens=5, wire_bytes=50),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol_mode)
+
+    paths = RuntimePaths(root=tmp_path)
+    summary_a = run_benchmark(suite_path=suite_a, paths=paths, use_llm=False)
+    report_a = generate_report(paths=paths, suite_name=summary_a.suite_name)
+    summary_b = run_benchmark(suite_path=suite_b, paths=paths, use_llm=False)
+    report_b = generate_report(paths=paths, suite_name=summary_b.suite_name)
+
+    assert report_a.exists()
+    assert report_b.exists()
+    assert paths.benchmark_suite_summary("suite_a").exists()
+    assert paths.benchmark_suite_summary("suite_b").exists()
+    assert paths.benchmark_suite_detail("suite_a").exists()
+    assert paths.benchmark_suite_detail("suite_b").exists()
 
 
 def test_benchmark_uses_configured_llm_for_both_modes_by_default(
@@ -401,6 +457,75 @@ tasks:
     assert all(event.task_id == "T1" for event in mode_events)
     assert mode_events[0].latency_ms == 11
     assert mode_events[1].latency_ms == 22
+
+
+def test_benchmark_cold_start_resets_run_memory_and_reports_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Explain protocol memory reuse.", encoding="utf-8")
+    suite = tmp_path / "suite.yaml"
+    suite.write_text(
+        """
+name: cold_start_suite
+tasks:
+  - id: C1
+    group: C
+    topic: cold baseline
+    input_file: task.txt
+    tags: [phase-c, cold]
+    depends_on: [B1]
+    cold_start: true
+""".strip(),
+        encoding="utf-8",
+    )
+    paths = RuntimePaths(root=tmp_path)
+    paths.ensure()
+    paths.memory_db.write_text("stale run memory", encoding="utf-8")
+    calls: list[tuple[str, bool]] = []
+
+    def fake_text_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, load_configured_llm
+        calls.append(("text", paths.memory_db.exists()))
+        return ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100),
+        )
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, load_configured_llm
+        calls.append(("protocol", paths.memory_db.exists()))
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol",
+            metrics=RunMetrics(estimated_tokens=5, wire_bytes=50),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol_mode)
+
+    events = []
+    run_benchmark(
+        suite_path=suite,
+        paths=paths,
+        use_llm=False,
+        progress_callback=events.append,
+    )
+
+    assert calls == [("text", False), ("protocol", False)]
+    assert any(event.phase == "cold_start" for event in events)
+    mode_event = next(event for event in events if event.phase == "mode_complete")
+    assert mode_event.cold_start is True
+    assert mode_event.depends_on == ["B1"]
+    assert mode_event.tags == ["phase-c", "cold"]
+    detail_rows = read_jsonl(paths.benchmark_suite_detail("cold_start_suite"))
+    assert detail_rows[0]["cold_start"] is True
+    assert detail_rows[0]["depends_on"] == ["B1"]
+    assert detail_rows[0]["tags"] == ["phase-c", "cold"]
 
 
 def test_benchmark_summarizes_memory_reuse_quality(

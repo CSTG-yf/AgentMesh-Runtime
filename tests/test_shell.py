@@ -45,6 +45,8 @@ def test_shell_help_and_config_do_not_fail(tmp_path) -> None:
     assert "运行标准评测套件" in rendered
     assert "/benchmark [--no-llm] long" in rendered
     assert "运行长上下文评测套件" in rendered
+    assert "/benchmark [--no-llm] showcase" in rendered
+    assert "运行展示型 A/B/C 套件" in rendered
     assert "/benchmark [--no-llm] <suite.yaml>" in rendered
     assert "运行自定义 YAML 评测套件" in rendered
     assert "llm_configured" in rendered
@@ -156,11 +158,32 @@ tasks:
                 task_id="T1",
                 group="T",
                 topic="protocol memory",
+                tags=["phase-b", "reuse"],
+                depends_on=["A1"],
                 mode="text",
                 trace_id="trace-text",
                 latency_ms=12,
                 tokens=34,
                 bytes=56,
+                use_llm=False,
+            )
+        )
+        progress_callback(
+            BenchmarkProgressEvent(
+                phase="cold_start",
+                suite_name="shell_progress_suite",
+                total_tasks=1,
+                total_stages=2,
+                current_task=1,
+                current_stage=1,
+                repeat_index=1,
+                repeat_total=1,
+                task_id="T1",
+                group="T",
+                topic="protocol memory",
+                tags=["phase-c", "cold"],
+                depends_on=["B1"],
+                cold_start=True,
                 use_llm=False,
             )
         )
@@ -191,6 +214,9 @@ tasks:
     assert "stage completed" in rendered
     assert "任务 1/1" in rendered
     assert "id=T1" in rendered
+    assert "depends_on=A1" in rendered
+    assert "tags=phase-b,reuse" in rendered
+    assert "memory reset" in rendered
     assert "mode=text" in rendered
     assert "benchmark completed" in rendered
     assert "Benchmark output files" in rendered

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
+
 from agentmesh.memory.policy import MemoryWritePolicy
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.search import MemorySearchResult
@@ -29,12 +32,16 @@ class HybridMemoryStore:
             db_path=paths.memory_db,
             log_writes=True,
         )
-        self.global_store = SQLiteMemoryStore(
-            paths=paths,
-            state_store=state_store,
-            encoder=encoder,
-            db_path=paths.global_memory_db,
-            log_writes=False,
+        self.global_store = (
+            None
+            if _global_memory_disabled()
+            else SQLiteMemoryStore(
+                paths=paths,
+                state_store=state_store,
+                encoder=encoder,
+                db_path=paths.global_memory_db,
+                log_writes=False,
+            )
         )
 
     def put(self, unit: MemoryUnit) -> dict[str, bool]:
@@ -43,7 +50,7 @@ class HybridMemoryStore:
         if self.policy.should_write(unit):
             self.run_store.put(unit.model_copy(update={"write_scope": "run"}))
             run_written = True
-        if self.policy.should_write_long_term(unit):
+        if self.global_store is not None and self.policy.should_write_long_term(unit):
             global_unit = unit.model_copy(update={"write_scope": "global"})
             self.global_store.put(global_unit)
             global_written = True
@@ -76,12 +83,15 @@ class HybridMemoryStore:
                 limit=limit * 3,
                 query_tags=query_tags,
             ),
-            *self.global_store.semantic_search_with_scores(
-                query,
-                limit=limit * 3,
-                query_tags=query_tags,
-            ),
         ]
+        if self.global_store is not None:
+            results.extend(
+                self.global_store.semantic_search_with_scores(
+                    query,
+                    limit=limit * 3,
+                    query_tags=query_tags,
+                )
+            )
         deduped: dict[str, MemorySearchResult] = {}
         for result in results:
             existing = deduped.get(result.memory.memory_id)
@@ -92,25 +102,28 @@ class HybridMemoryStore:
 
     def keyword_search(self, keyword: str, limit: int = 5) -> list[MemoryUnit]:
         return _dedupe_units(
-            [
-                *self.run_store.keyword_search(keyword, limit=limit),
-                *self.global_store.keyword_search(keyword, limit=limit),
-            ],
+            _global_search_units(
+                self.global_store,
+                self.run_store.keyword_search(keyword, limit=limit),
+                lambda store: store.keyword_search(keyword, limit=limit),
+            ),
             limit=limit,
         )
 
     def tag_search(self, tag: str, limit: int = 5) -> list[MemoryUnit]:
         return _dedupe_units(
-            [
-                *self.run_store.tag_search(tag, limit=limit),
-                *self.global_store.tag_search(tag, limit=limit),
-            ],
+            _global_search_units(
+                self.global_store,
+                self.run_store.tag_search(tag, limit=limit),
+                lambda store: store.tag_search(tag, limit=limit),
+            ),
             limit=limit,
         )
 
     def increment_reuse(self, memory_id: str) -> None:
         self.run_store.increment_reuse(memory_id)
-        self.global_store.increment_reuse(memory_id)
+        if self.global_store is not None:
+            self.global_store.increment_reuse(memory_id)
 
 
 def _dedupe_units(units: list[MemoryUnit], limit: int) -> list[MemoryUnit]:
@@ -118,3 +131,17 @@ def _dedupe_units(units: list[MemoryUnit], limit: int) -> list[MemoryUnit]:
     for unit in units:
         deduped.setdefault(unit.memory_id, unit)
     return list(deduped.values())[:limit]
+
+
+def _global_memory_disabled() -> bool:
+    return os.getenv("AGENTMESH_DISABLE_GLOBAL_MEMORY", "").lower() in {"1", "true", "yes"}
+
+
+def _global_search_units(
+    global_store: SQLiteMemoryStore | None,
+    run_units: list[MemoryUnit],
+    search_global: Callable[[SQLiteMemoryStore], list[MemoryUnit]],
+) -> list[MemoryUnit]:
+    if global_store is None:
+        return run_units
+    return [*run_units, *search_global(global_store)]

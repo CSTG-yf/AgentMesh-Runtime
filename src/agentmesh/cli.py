@@ -77,7 +77,7 @@ def run(
 def benchmark(
     suite: Annotated[
         Path,
-        typer.Option(help="Benchmark suite alias standard|long or custom YAML path"),
+        typer.Option(help="Benchmark suite alias standard|long|showcase or custom YAML path"),
     ],
     root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
     llm: Annotated[
@@ -97,18 +97,24 @@ def benchmark(
             use_llm=llm,
             progress_callback=lambda event: render_benchmark_progress(console, event),
         )
-        report_path = generate_report(paths)
+        report_path = generate_report(paths, suite_name=summary.suite_name)
     except Exception as exc:
         console.print(f"[red]agentmesh benchmark failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     _print_json(summary.model_dump(mode="json"))
-    render_benchmark_artifacts(console, paths, report_path=report_path)
+    render_benchmark_artifacts(
+        console,
+        paths,
+        suite_name=summary.suite_name,
+        report_path=report_path,
+    )
 
 
 def _benchmark_suite_path(root: Path, suite: Path) -> Path:
     aliases = {
         "standard": root / "examples" / "benchmarks" / "continuous_tasks.yaml",
         "long": root / "examples" / "benchmarks" / "long_context_tasks.yaml",
+        "showcase": root / "examples" / "benchmarks" / "showcase_benchmark.yaml",
     }
     path = aliases.get(str(suite), suite)
     if not path.is_absolute():

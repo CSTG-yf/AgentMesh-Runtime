@@ -5,8 +5,18 @@ from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
 
-def generate_report(paths: RuntimePaths) -> Path:
-    summary = _read_summary(paths.benchmark_summary)
+def generate_report(paths: RuntimePaths, *, suite_name: str | None = None) -> Path:
+    summary_path = (
+        paths.benchmark_suite_summary(suite_name)
+        if suite_name is not None
+        else paths.benchmark_summary
+    )
+    report_path = (
+        paths.benchmark_suite_report(suite_name)
+        if suite_name is not None
+        else paths.experiment_report
+    )
+    summary = _read_summary(summary_path)
     messages = read_jsonl(paths.protocol_messages)[:5]
     text_agent_io = read_jsonl(paths.text_agent_io)[:5]
     protocol_agent_io = read_jsonl(paths.protocol_agent_io)[:5]
@@ -86,9 +96,9 @@ def generate_report(paths: RuntimePaths) -> Path:
         "```",
         "",
     ]
-    paths.experiment_report.parent.mkdir(parents=True, exist_ok=True)
-    paths.experiment_report.write_text("\n".join(lines), encoding="utf-8")
-    return paths.experiment_report
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return report_path
 
 
 def _read_summary(path: Path) -> dict[str, str]:

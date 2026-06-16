@@ -1,4 +1,6 @@
 import csv
+import os
+import sqlite3
 import shutil
 from pathlib import Path
 from collections.abc import Callable
@@ -69,6 +71,9 @@ class BenchmarkProgressEvent(BaseModel):
     task_id: str = ""
     group: str = ""
     topic: str = ""
+    tags: list[str] = []
+    depends_on: list[str] = []
+    cold_start: bool = False
     mode: str = ""
     trace_id: str = ""
     latency_ms: int = 0
@@ -85,14 +90,17 @@ def run_benchmark(
     progress_callback: Callable[[BenchmarkProgressEvent], None] | None = None,
 ) -> BenchmarkSummary:
     suite = _load_suite(suite_path)
-    if paths.latest_run.exists():
-        shutil.rmtree(paths.latest_run)
+    _reset_runtime_working_dirs(paths)
     paths.ensure()
+    previous_global_memory_setting = os.environ.get("AGENTMESH_DISABLE_GLOBAL_MEMORY")
+    os.environ["AGENTMESH_DISABLE_GLOBAL_MEMORY"] = "1"
     repeat = int(suite.get("repeat", 1))
     tasks = suite.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         raise BenchmarkConfigError("Benchmark suite requires tasks")
     suite_name = str(suite.get("name", suite_path.stem))
+    detail_path = paths.benchmark_suite_detail(suite_name)
+    summary_path = paths.benchmark_suite_summary(suite_name)
     total_tasks = repeat * len(tasks)
     total_stages = total_tasks * 2
     _emit_progress(
@@ -147,6 +155,28 @@ def run_benchmark(
     for _round in range(repeat):
         for task_index, task in enumerate(tasks, start=1):
             current_task = _round * len(tasks) + task_index
+            if task.get("cold_start"):
+                _reset_run_memory(paths)
+                _emit_progress(
+                    progress_callback,
+                    BenchmarkProgressEvent(
+                        phase="cold_start",
+                        suite_name=suite_name,
+                        total_tasks=total_tasks,
+                        total_stages=total_stages,
+                        current_task=current_task,
+                        current_stage=(current_task - 1) * 2,
+                        repeat_index=_round + 1,
+                        repeat_total=repeat,
+                        task_id=str(task.get("id", "")),
+                        group=str(task.get("group", "")),
+                        topic=str(task.get("topic", "")),
+                        tags=_list_of_str(task.get("tags")),
+                        depends_on=_list_of_str(task.get("depends_on")),
+                        cold_start=True,
+                        use_llm=use_llm,
+                    ),
+                )
             input_file = paths.root / str(task["input_file"])
             text_result = run_text_mode(
                 task_path=input_file,
@@ -249,11 +279,14 @@ def run_benchmark(
             tool_feedback_count += protocol_result.metrics.tool_feedback_count
             for result in [text_result, protocol_result]:
                 append_jsonl(
-                    paths.benchmark_detail,
+                    detail_path,
                     {
                         "task_id": task["id"],
                         "group": task.get("group", ""),
                         "topic": task.get("topic", ""),
+                        "tags": task.get("tags", []),
+                        "depends_on": task.get("depends_on", []),
+                        "cold_start": bool(task.get("cold_start", False)),
                         "mode": result.mode,
                         "trace_id": result.trace_id,
                         "metrics": result.metrics.model_dump(),
@@ -326,7 +359,7 @@ def run_benchmark(
         retriever_refine_count=retriever_refine_count,
         tool_feedback_count=tool_feedback_count,
     )
-    _write_summary(paths.benchmark_summary, summary)
+    _write_summary(summary_path, summary)
     _emit_progress(
         progress_callback,
         BenchmarkProgressEvent(
@@ -340,6 +373,7 @@ def run_benchmark(
             use_llm=use_llm,
         ),
     )
+    _restore_global_memory_setting(previous_global_memory_setting)
     return summary
 
 
@@ -376,6 +410,9 @@ def _progress_event(
         task_id=str(task.get("id", "")),
         group=str(task.get("group", "")),
         topic=str(task.get("topic", "")),
+        tags=_list_of_str(task.get("tags")),
+        depends_on=_list_of_str(task.get("depends_on")),
+        cold_start=bool(task.get("cold_start", False)),
         mode=str(result.mode),
         trace_id=str(result.trace_id),
         latency_ms=result.metrics.latency_ms,
@@ -383,6 +420,58 @@ def _progress_event(
         bytes=_byte_metric(result.metrics),
         use_llm=use_llm,
     )
+
+
+def _list_of_str(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _reset_run_memory(paths: RuntimePaths) -> None:
+    db = paths.memory_db
+    if not db.exists():
+        return
+    try:
+        with sqlite3.connect(db) as conn:
+            conn.execute("DELETE FROM memory_fts")
+            conn.execute("DELETE FROM memory_units")
+            conn.execute("VACUUM")
+    except sqlite3.DatabaseError:
+        try:
+            db.unlink()
+        except PermissionError:
+            pass
+
+
+def _reset_runtime_working_dirs(paths: RuntimePaths) -> None:
+    for path in [paths.text_dir, paths.protocol_dir, paths.sandbox_dir]:
+        if path.exists():
+            shutil.rmtree(path)
+    _reset_data_dir(paths)
+
+
+def _reset_data_dir(paths: RuntimePaths) -> None:
+    if paths.state_payload_dir.exists():
+        shutil.rmtree(paths.state_payload_dir, ignore_errors=True)
+    _unlink_if_available(paths.memory_db)
+    _unlink_if_available(paths.state_index)
+
+
+def _unlink_if_available(path: Path) -> None:
+    if not path.exists():
+        return
+    try:
+        path.unlink()
+    except PermissionError:
+        return
+
+
+def _restore_global_memory_setting(previous_value: str | None) -> None:
+    if previous_value is None:
+        os.environ.pop("AGENTMESH_DISABLE_GLOBAL_MEMORY", None)
+    else:
+        os.environ["AGENTMESH_DISABLE_GLOBAL_MEMORY"] = previous_value
 
 
 def _load_suite(path: Path) -> dict[str, Any]:

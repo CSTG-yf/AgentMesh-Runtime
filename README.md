@@ -254,8 +254,9 @@ Shell 中直接输入一段消息，默认等同于 `/ask`，会走 Protocol Mod
 /compare [--no-llm] <task>
 /ask <message>
 /run text|protocol <task-file>
-/benchmark standard
-/benchmark long
+/benchmark [--no-llm] standard
+/benchmark [--no-llm] long
+/benchmark [--no-llm] showcase
 /memory --keyword|--tag|--semantic <query>
 /trace [limit]
 /report
@@ -272,27 +273,45 @@ Shell 中直接输入一段消息，默认等同于 `/ask`，会走 Protocol Mod
 标准连续任务：
 
 ```bash
-uv run agentmesh benchmark --suite examples/benchmarks/continuous_tasks.yaml
+uv run agentmesh benchmark --suite standard
 
 # 离线可复现 benchmark
-uv run agentmesh benchmark --suite examples/benchmarks/continuous_tasks.yaml --no-llm
-uv run agentmesh report --run runs/latest
+uv run agentmesh benchmark --suite standard --no-llm
 ```
 
 长上下文连续任务：
 
 ```bash
-uv run agentmesh benchmark --suite examples/benchmarks/long_context_tasks.yaml
-uv run agentmesh report --run runs/latest
+uv run agentmesh benchmark --suite long
 ```
+
+展示型 A/B/C 任务：
+
+```bash
+uv run agentmesh benchmark --suite showcase
+```
+
+`showcase` 对应 `examples/benchmarks/showcase_benchmark.yaml`，包含 Phase A 知识构建、Phase B warm memory reuse、Phase C `cold_start` baseline。Benchmark 运行时会在终端输出 suite 开始、每条任务的 Text/Protocol 阶段完成、cold_start 记忆重置，以及最终输出文件路径。
+
+Benchmark 运行期间会隔离项目级 global memory，只使用当前 benchmark run 内产生的记忆，避免历史长期记忆污染 standard/long/showcase 指标；`cold_start: true` 任务会在执行前清空本次 run 的记忆库。
 
 运行后主要产物：
 
 ```text
 runs/latest/
-  benchmark_summary.csv       # 汇总指标
-  benchmark_detail.jsonl      # 每轮 text/protocol 明细
-  experiment_report.md        # 可提交的实验报告
+  benchmarks/
+    continuous_tasks/
+      benchmark_summary.csv   # standard 汇总指标
+      benchmark_detail.jsonl  # standard 每轮 text/protocol 明细
+      experiment_report.md    # standard 可提交实验报告
+    long_context_tasks/
+      benchmark_summary.csv
+      benchmark_detail.jsonl
+      experiment_report.md
+    showcase_protocol_advantage/
+      benchmark_summary.csv
+      benchmark_detail.jsonl
+      experiment_report.md
   data/
     memory.sqlite             # 当前 run 记忆库
     state_index.sqlite        # StateRecord 索引
@@ -308,6 +327,19 @@ runs/latest/
     agent_io.jsonl             # Text Mode 每个 Agent 收到的全文上下文和输出
     messages.jsonl            # Text Mode 消息
     trace.jsonl               # Text Mode trace
+```
+
+`experiment_report.md` 是 Markdown 格式，结构为：
+
+```text
+# AgentMesh Runtime Experiment Report
+## Metrics
+  - TokenSavingRate / WireBytesReductionRate / MemoryHitRate / QualityPreservationRate ...
+## Protocol Log Sample
+## Text Agent I/O Sample
+## Protocol Agent I/O Sample
+## StateRef Sample
+## MemoryUnit Sample
 ```
 
 ## 大模型和环境配置
@@ -457,6 +489,7 @@ E:/system-compute/
 
   examples/benchmarks/continuous_tasks.yaml      # 标准连续任务 benchmark suite
   examples/benchmarks/long_context_tasks.yaml    # 长上下文连续任务 benchmark suite
+  examples/benchmarks/showcase_benchmark.yaml    # 展示型 A/B/C benchmark suite，含 warm reuse 与 cold baseline
   examples/corpora/contest_requirements.md       # 比赛要求示例语料
   examples/corpora/sample_repo_summary.md        # 示例仓库摘要语料
   examples/tasks/A1_requirements.txt             # A 组第 1 轮需求任务
