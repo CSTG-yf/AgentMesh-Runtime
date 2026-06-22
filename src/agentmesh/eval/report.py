@@ -34,6 +34,11 @@ def generate_report(paths: RuntimePaths, *, suite_name: str | None = None) -> Pa
         f"- TokenEstimator: {summary.get('token_estimator', 'mixed_cjk')}",
         f"- TokenSavingRate: {summary.get('token_saving_rate', '0')}",
         f"- WireBytesReductionRate: {summary.get('wire_bytes_reduction_rate', '0')}",
+        f"- FairWireReductionRate: {summary.get('fair_wire_reduction_rate', '0')}",
+        "- AgentIoBytesReductionRate: "
+        f"{summary.get('agent_io_bytes_reduction_rate', '0')}",
+        f"- TextAgentIoBytes: {summary.get('text_agent_io_bytes', '0')}",
+        f"- ProtocolAgentIoBytes: {summary.get('protocol_agent_io_bytes', '0')}",
         f"- TextWireBytes: {summary.get('text_wire_bytes', '0')}",
         f"- ProtocolWireBytes: {summary.get('protocol_wire_bytes', '0')}",
         "- ProtocolSessionDictionaryBytes: "
@@ -46,6 +51,10 @@ def generate_report(paths: RuntimePaths, *, suite_name: str | None = None) -> Pa
         f"- LatencyReductionRate: {summary.get('latency_reduction_rate', '0')}",
         f"- MemoryHitRate: {summary.get('memory_hit_rate', '0')}",
         f"- MemoryReusedUnitCount: {summary.get('memory_reused_unit_count', '0')}",
+        f"- MemoryEvidenceCount: {summary.get('memory_evidence_count', '0')}",
+        f"- MemoryEvidenceBytes: {summary.get('memory_evidence_bytes', '0')}",
+        "- MemoryAvgEvidenceBytesPerQuery: "
+        f"{summary.get('memory_avg_evidence_bytes_per_query', '0')}",
         "- MemoryAvgReusedUnitsPerQuery: "
         f"{summary.get('memory_avg_reused_units_per_query', '0')}",
         f"- MemoryAvgScore: {summary.get('memory_avg_score', '0')}",

@@ -262,6 +262,8 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
                 memory_query_count=2,
                 memory_query_hit_count=1,
                 memory_reused_unit_count=3,
+                memory_evidence_count=3,
+                memory_evidence_bytes=360,
                 memory_avg_score=0.7,
                 memory_avg_semantic_similarity=0.5,
                 memory_avg_tag_overlap_score=0.25,
@@ -312,8 +314,11 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
     assert "Protocol Mode Latency Breakdown" in rendered
     assert "planner" in rendered
     assert "memory reused units（复用记忆条数）" in rendered
+    assert "memory evidence bytes（注入给 Agent 的记忆证据字节）" in rendered
     assert "memory avg semantic（平均语义相似度）" in rendered
     assert "token_saving_rate（token 节省率）" in rendered
+    assert "fair_wire_reduction_rate（仅 wire 层降低率）" in rendered
+    assert "agent_io_bytes_reduction_rate（Agent I/O 字节降低率）" in rendered
     assert "memory avg tag overlap" not in rendered
 
 

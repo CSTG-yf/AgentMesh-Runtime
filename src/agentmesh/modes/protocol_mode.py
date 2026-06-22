@@ -84,7 +84,7 @@ def _run_protocol_mode_impl(
 ) -> ModeRunResult:
     paths.ensure()
     trace_id = trace_id or f"trace-{uuid4().hex[:12]}"
-    task = task_path.read_text(encoding="utf-8")
+    task = task_path.read_text(encoding="utf-8-sig")
     start = time.perf_counter()
     stage_latency_ms: dict[str, int] = {}
 
@@ -99,6 +99,7 @@ def _run_protocol_mode_impl(
         llm_client=llm_client,
         load_configured_llm=load_configured_llm,
     )
+    protocol_budget = context.config.protocol
     state_store = StateStore(
         paths,
         payload_backend=context.config.state.payload_backend,
@@ -124,45 +125,39 @@ def _run_protocol_mode_impl(
     mark_stage("setup", stage_start)
 
     stage_start = time.perf_counter()
-    for agent in registry.all():
-        messages.extend([agent.hello(trace_id), agent.advertise_capabilities(trace_id)])
-    messages.append(
-        AMPMessage(
-            trace_id=trace_id,
-            source_agent="runtime",
-            target_agent="runtime",
-            msg_type=MsgType.CAPABILITY_QUERY,
-            action="system.capability_query",
-            params={"required": list(protocol_map.values())},
+    if not context.config.protocol.skip_handshake_for_inproc:
+        for agent in registry.all():
+            messages.extend([agent.hello(trace_id), agent.advertise_capabilities(trace_id)])
+        messages.append(
+            AMPMessage(
+                trace_id=trace_id,
+                source_agent="runtime",
+                target_agent="runtime",
+                msg_type=MsgType.CAPABILITY_QUERY,
+                action="system.capability_query",
+                params={"required": list(protocol_map.values())},
+            )
         )
-    )
-    messages.append(
-        AMPMessage(
-            trace_id=trace_id,
-            source_agent="runtime",
-            target_agent="runtime",
-            msg_type=MsgType.PROTOCOL_MAP,
-            action="protocol.map",
-            result={
-                **protocol_map,
-                "llm_configured": context.config.llm.configured,
-                "llm_client_available": context.llm_client is not None,
-            },
+        messages.append(
+            AMPMessage(
+                trace_id=trace_id,
+                source_agent="runtime",
+                target_agent="runtime",
+                msg_type=MsgType.PROTOCOL_MAP,
+                action="protocol.map",
+                result={
+                    **protocol_map,
+                    "llm_configured": context.config.llm.configured,
+                    "llm_client_available": context.llm_client is not None,
+                },
+            )
         )
-    )
 
     task_ref = state_store.put_text(
         trace_id=trace_id,
         producer="runtime",
         text=task,
         metadata={"task_path": str(task_path)},
-    )
-    query_embedding = encoder.encode(task)
-    query_ref = state_store.put_embedding(
-        trace_id=trace_id,
-        producer="runtime",
-        embedding=query_embedding,
-        parent_state_refs=[task_ref],
     )
     messages.append(
         AMPMessage(
@@ -171,8 +166,8 @@ def _run_protocol_mode_impl(
             target_agent="planner",
             msg_type=MsgType.STATE_REF,
             action="state.put_text",
-            state_refs=[task_ref, query_ref],
-            result={"state_count": 2},
+            state_refs=[task_ref],
+            result={"state_count": 1},
         )
     )
     mark_stage("state_task_embedding", stage_start)
@@ -181,8 +176,8 @@ def _run_protocol_mode_impl(
     planner_result = scheduler.invoke(
         source_agent="runtime",
         action="plan.create",
-        params={"task_chars": len(task)},
-        state_refs=[task_ref, query_ref],
+        params={"task_chars": len(task), "task": _compact_text(task, 300)},
+        state_refs=[task_ref],
     )
     decision = _planner_decision(planner_result, task, context.capability_to_agent)
     plan_summary = _planner_summary(planner_result)
@@ -190,9 +185,13 @@ def _run_protocol_mode_impl(
     plan_ref = state_store.put_summary(
         trace_id=trace_id,
         producer="planner",
-        summary=plan_summary,
-        parent_state_refs=[task_ref, query_ref],
-        metadata={"llm_used": _non_empty_text(planner_result.result.get("llm_plan")) is not None},
+        summary=_compact_text(plan_summary, protocol_budget.state_summary_max_chars),
+        parent_state_refs=[task_ref],
+        metadata={
+            "llm_used": _non_empty_text(planner_result.result.get("llm_plan")) is not None,
+            "full_chars": len(plan_summary),
+            "compacted": len(plan_summary) > protocol_budget.state_summary_max_chars,
+        },
     )
     next_agent = "retriever" if decision.need_retrieval else "summarizer"
     if decision.need_tool_execution and not decision.need_retrieval:
@@ -236,18 +235,24 @@ def _run_protocol_mode_impl(
         retriever_result = scheduler.invoke(
             source_agent="planner",
             action="memory.semantic_search",
-            params={},
-            state_refs=[task_ref, query_ref, plan_ref],
+            params={"query": _compact_text(task, 300), "task_chars": len(task)},
+            state_refs=[task_ref, plan_ref],
         )
         evidence = list(retriever_result.result["evidence"])
         memory_hits = _memory_units_from_evidence(evidence)
+        compact_evidence = _compact_evidence_items(
+            evidence,
+            snippet_limit=protocol_budget.evidence_snippet_max_chars,
+        )
         evidence_ref = state_store.put_evidence(
             trace_id=trace_id,
             producer="retriever",
-            evidence=evidence,
-            parent_state_refs=[task_ref, query_ref, plan_ref],
+            evidence=compact_evidence,
+            parent_state_refs=[task_ref, plan_ref],
             metadata={
                 "llm_used": any(item.get("title") == "llm-evidence" for item in evidence),
+                "full_count": len(evidence),
+                "compacted": True,
             },
         )
         messages.append(
@@ -268,7 +273,15 @@ def _run_protocol_mode_impl(
         executor_result = scheduler.invoke(
             source_agent="retriever" if evidence_ref else "planner",
             action="tool.run_python",
-            params={"evidence_count": len(evidence)},
+            params={
+                "task": _compact_text(task, protocol_budget.agent_log_param_max_chars),
+                "evidence": _evidence_digest(
+                    evidence,
+                    snippet_limit=protocol_budget.evidence_snippet_max_chars,
+                    max_items=3,
+                ),
+                "evidence_count": len(evidence),
+            },
             state_refs=[ref for ref in [task_ref, evidence_ref] if ref],
         )
         mark_stage("executor", stage_start)
@@ -310,12 +323,18 @@ def _run_protocol_mode_impl(
         code_result_ref = state_store.put_code_result(
             trace_id=trace_id,
             producer="executor",
-            result=code_result_payload,
+            result=_compact_code_result_payload(
+                code_result_payload,
+                text_limit=protocol_budget.state_summary_max_chars,
+            ),
             parent_state_refs=parent_refs,
             metadata={
                 "llm_used": bool(executor_result.result.get("llm_generated_code")),
                 "codeact": True,
                 "tool_feedback": True,
+                "full_stdout_chars": len(str(code_result_payload.get("stdout", ""))),
+                "full_stderr_chars": len(str(code_result_payload.get("stderr", ""))),
+                "compacted": True,
             },
         )
         messages.append(
@@ -342,13 +361,19 @@ def _run_protocol_mode_impl(
             refined_plan_result = scheduler.invoke(
                 source_agent="executor",
                 action="plan.refine",
-                params={"tool_feedback": tool_feedback},
+                params={
+                    "task": _compact_text(task, 300),
+                    "tool_feedback": tool_feedback,
+                },
                 state_refs=[task_ref] + feedback_refs,
             )
             refined_plan_ref = state_store.put_summary(
                 trace_id=trace_id,
                 producer="planner",
-                summary="; ".join(refined_plan_result.result.get("refined_plan", [])),
+                summary=_compact_text(
+                    "; ".join(refined_plan_result.result.get("refined_plan", [])),
+                    protocol_budget.state_summary_max_chars,
+                ),
                 parent_state_refs=feedback_refs,
                 metadata={"refined": True},
             )
@@ -367,7 +392,10 @@ def _run_protocol_mode_impl(
             refined_evidence_result = scheduler.invoke(
                 source_agent="planner" if refined_plan_ref else "executor",
                 action="evidence.refine",
-                params={"tool_feedback": tool_feedback},
+                params={
+                    "query": _compact_text(task, 300),
+                    "tool_feedback": tool_feedback,
+                },
                 state_refs=(
                     [task_ref]
                     + feedback_refs
@@ -379,9 +407,12 @@ def _run_protocol_mode_impl(
             refined_evidence_ref = state_store.put_evidence(
                 trace_id=trace_id,
                 producer="retriever",
-                evidence=refined_items,
+                evidence=_compact_evidence_items(
+                    refined_items,
+                    snippet_limit=protocol_budget.evidence_snippet_max_chars,
+                ),
                 parent_state_refs=feedback_refs + ([refined_plan_ref] if refined_plan_ref else []),
-                metadata={"refined": True},
+                metadata={"refined": True, "full_count": len(refined_items), "compacted": True},
             )
             feedback_round_count = 1
             retriever_refine_count = 1
@@ -406,6 +437,12 @@ def _run_protocol_mode_impl(
         source_agent=summarizer_source,
         action="summary.create",
         params={
+            "task": _compact_text(task, 500),
+            "evidence_digest": _evidence_digest(
+                evidence,
+                snippet_limit=protocol_budget.evidence_snippet_max_chars,
+                max_items=3,
+            ),
             "evidence_count": len(evidence),
             "code_result": code_result_summary,
             "tool_feedback": tool_feedback or {},
@@ -424,10 +461,15 @@ def _run_protocol_mode_impl(
     summary_ref = state_store.put_summary(
         trace_id=trace_id,
         producer="summarizer",
-        summary=summary_text,
+        summary=_compact_text(summary_text, protocol_budget.state_summary_max_chars),
         parent_state_refs=summary_state_refs,
-        metadata={"llm_used": model_summary is not None},
+        metadata={
+            "llm_used": model_summary is not None,
+            "full_chars": len(summary_text),
+            "compacted": len(summary_text) > protocol_budget.state_summary_max_chars,
+        },
     )
+    compact_memory_summary = _compact_text(summary_text, 320)
     memory_content = summary_text
     classification = LLMMemoryTagger(context.llm_client).classify(
         task=task,
@@ -436,21 +478,15 @@ def _run_protocol_mode_impl(
     )
     # Embed topic + summary together so the vector captures both "what task"
     # and "what answer", making it retrievable from either direction.
-    embedding_source = f"{classification.topic}: {summary_text}"
+    embedding_source = f"{classification.topic}: {compact_memory_summary}"
     memory_embedding = encoder.encode(embedding_source)
-    memory_embedding_ref = state_store.put_embedding(
-        trace_id=trace_id,
-        producer="summarizer",
-        embedding=memory_embedding,
-        parent_state_refs=[summary_ref],
-    )
     mark_stage("summarizer", stage_start)
 
     stage_start = time.perf_counter()
     unit = MemoryUnit(
         source_agent="summarizer",
         task_topic=classification.topic,
-        summary=summary_text,
+        summary=compact_memory_summary,
         content=memory_content,
         tags=classification.tags,
         evidence_refs=[ref for ref in [evidence_ref, refined_evidence_ref] if ref],
@@ -459,7 +495,7 @@ def _run_protocol_mode_impl(
             for ref in [task_ref, plan_ref, refined_plan_ref, code_result_ref, summary_ref]
             if ref
         ],
-        embedding_ref=memory_embedding_ref,
+        embedding_ref=None,
         embedding_vector=memory_embedding,
         confidence=0.8,
         validity_score=_validity_score(code_result_payload),
@@ -482,7 +518,7 @@ def _run_protocol_mode_impl(
                     "long_term_written": write_result["global_written"],
                     "importance_score": unit.importance_score,
                 },
-                state_refs=unit.state_refs + unit.evidence_refs + [memory_embedding_ref],
+                state_refs=unit.state_refs + unit.evidence_refs,
             )
         )
     mark_stage("memory_write", stage_start)
@@ -501,7 +537,8 @@ def _run_protocol_mode_impl(
         trace_id=trace_id,
     )
     transport_stats = scheduler.transport_metrics()
-    memory_quality = _memory_quality_from_evidence(evidence)
+    memory_quality = _memory_quality_from_log(paths=paths, trace_id=trace_id)
+    memory_evidence_bytes = _memory_evidence_bytes(evidence)
     mark_stage("artifact_write", stage_start)
     latency_ms = int((time.perf_counter() - start) * 1000)
     metrics = RunMetrics(
@@ -536,6 +573,8 @@ def _run_protocol_mode_impl(
         memory_hit_count=len(memory_hits),
         memory_query_hit_count=1 if memory_hits else 0,
         memory_reused_unit_count=len(memory_hits),
+        memory_evidence_count=len(memory_hits),
+        memory_evidence_bytes=memory_evidence_bytes,
         memory_avg_score=memory_quality["avg_score"],
         memory_avg_semantic_similarity=memory_quality["avg_semantic_similarity"],
         memory_avg_tag_overlap_score=memory_quality["avg_tag_overlap_score"],
@@ -568,18 +607,47 @@ def _memory_units_from_evidence(evidence: list[dict[str, Any]]) -> list[str]:
     return list(dict.fromkeys(memory_ids))
 
 
+def _memory_evidence_bytes(evidence: list[dict[str, Any]]) -> int:
+    return sum(len(orjson.dumps(item)) for item in evidence if item.get("memory_id"))
+
+
+def _memory_quality_from_log(*, paths: RuntimePaths, trace_id: str) -> dict[str, float]:
+    hits: list[dict[str, Any]] = []
+    for row in read_jsonl(paths.protocol_memory_hits):
+        if str(row.get("trace_id", "")) != trace_id:
+            continue
+        row_hits = row.get("memory_hits")
+        if isinstance(row_hits, list):
+            hits.extend(item for item in row_hits if isinstance(item, dict))
+    if not hits:
+        return _empty_memory_quality()
+    return {
+        "avg_score": sum(float(item.get("score", 0.0)) for item in hits) / len(hits),
+        "avg_semantic_similarity": (
+            sum(float(item.get("semantic_similarity", 0.0)) for item in hits) / len(hits)
+        ),
+        "avg_tag_overlap_score": (
+            sum(float(item.get("tag_overlap_score", 0.0)) for item in hits) / len(hits)
+        ),
+    }
+
+
 def _memory_quality_from_evidence(evidence: list[dict[str, Any]]) -> dict[str, float]:
     memory_items = [item for item in evidence if item.get("memory_id")]
     if not memory_items:
-        return {
-            "avg_score": 0.0,
-            "avg_semantic_similarity": 0.0,
-            "avg_tag_overlap_score": 0.0,
-        }
+        return _empty_memory_quality()
     return {
         "avg_score": _avg_float(memory_items, "memory_score"),
         "avg_semantic_similarity": _avg_float(memory_items, "semantic_similarity"),
         "avg_tag_overlap_score": _avg_float(memory_items, "tag_overlap_score"),
+    }
+
+
+def _empty_memory_quality() -> dict[str, float]:
+    return {
+        "avg_score": 0.0,
+        "avg_semantic_similarity": 0.0,
+        "avg_tag_overlap_score": 0.0,
     }
 
 
@@ -792,6 +860,104 @@ def _evidence_digest(evidence: list[dict[str, Any]]) -> str:
             "Use it as a starting reference — adapt rather than recompute.",
         )
     return "\n".join(snippets)
+
+
+def _compact_text(text: str, limit: int) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: max(0, limit - 1)]}…"
+
+
+def _compact_evidence_items(
+    evidence: list[dict[str, Any]],
+    *,
+    snippet_limit: int,
+) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for item in evidence:
+        compact_item: dict[str, Any] = {
+            "title": str(item.get("title", "evidence")),
+            "snippet": _compact_text(str(item.get("snippet", "")), snippet_limit),
+        }
+        memory_id = item.get("memory_id")
+        if isinstance(memory_id, str) and memory_id:
+            compact_item["memory_id"] = memory_id
+        if "memory_score" in item:
+            compact_item["memory_score"] = item.get("memory_score")
+        compacted.append(compact_item)
+    return compacted
+
+
+def _compact_code_result_payload(payload: dict[str, Any], *, text_limit: int) -> dict[str, Any]:
+    codeact = payload.get("codeact")
+    codeact_summary: dict[str, Any] = {}
+    if isinstance(codeact, dict):
+        code = str(codeact.get("code", ""))
+        codeact_summary = {
+            "code_preview": _compact_text(code, text_limit),
+            "code_chars": len(code),
+            "generated_by_llm": bool(codeact.get("generated_by_llm")),
+            "stdout": _compact_text(str(codeact.get("stdout", "")), text_limit),
+            "stderr": _compact_text(str(codeact.get("stderr", "")), max(120, text_limit // 2)),
+            "exit_code": codeact.get("exit_code"),
+        }
+    generated_files = payload.get("generated_files")
+    compact_files: list[dict[str, Any]] = []
+    if isinstance(generated_files, list):
+        for item in generated_files:
+            if not isinstance(item, dict):
+                continue
+            compact_files.append(
+                {
+                    "path": item.get("path", ""),
+                    "language": item.get("language", ""),
+                    "content_chars": len(str(item.get("content", ""))),
+                }
+            )
+    return {
+        "stdout": _compact_text(str(payload.get("stdout", "")), text_limit),
+        "stderr": _compact_text(str(payload.get("stderr", "")), max(120, text_limit // 2)),
+        "exit_code": payload.get("exit_code"),
+        "latency_ms": payload.get("latency_ms"),
+        "backend": payload.get("backend", ""),
+        "generated_files": compact_files,
+        "tool_feedback": payload.get("tool_feedback", {}),
+        "codeact": codeact_summary,
+    }
+
+
+def _evidence_digest(
+    evidence: list[dict[str, Any]],
+    *,
+    snippet_limit: int = 160,
+    max_items: int = 3,
+) -> str:
+    snippets: list[str] = []
+    has_memory_reuse = False
+    for item in evidence[:max_items]:
+        title = str(item.get("title", "evidence"))
+        snippet = _compact_text(str(item.get("snippet", "")), snippet_limit)
+        reuse_hint = str(item.get("reuse_hint", ""))
+        if reuse_hint:
+            has_memory_reuse = True
+            snippets.append(f"{title} [memory reuse]: {snippet}")
+        else:
+            snippets.append(f"{title}: {snippet}")
+    if has_memory_reuse:
+        snippets.insert(
+            0,
+            "[MEMORY_REUSE_ACTIVE] The evidence below came from similar prior tasks. "
+            "Use it as a starting reference; adapt rather than recompute.",
+        )
+    return "\n".join(snippets)
+
+
+def _compact_text(text: str, limit: int) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: max(0, limit - 3)]}..."
 
 
 def _code_result_summary(payload: dict[str, Any]) -> str:

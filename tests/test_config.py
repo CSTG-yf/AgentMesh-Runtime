@@ -94,6 +94,30 @@ def test_config_loads_state_payload_backend_settings(tmp_path: Path) -> None:
     assert config.state.shm_enabled
 
 
+def test_config_loads_protocol_budget_settings(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "AGENTMESH_STATE_SUMMARY_MAX_CHARS=640",
+                "AGENTMESH_EVIDENCE_SNIPPET_MAX_CHARS=120",
+                "AGENTMESH_AGENT_LOG_OUTPUT_MAX_CHARS=900",
+                "AGENTMESH_AGENT_LOG_PARAM_MAX_CHARS=320",
+                "AGENTMESH_MEMORY_REUSE_DEFAULT_LIMIT=2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = AgentMeshConfig.from_env_file(env_file)
+
+    assert config.protocol.state_summary_max_chars == 640
+    assert config.protocol.evidence_snippet_max_chars == 120
+    assert config.protocol.agent_log_output_max_chars == 900
+    assert config.protocol.agent_log_param_max_chars == 320
+    assert config.protocol.memory_reuse_default_limit == 2
+
+
 def test_protocol_mode_receives_optional_llm_config_from_env(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         "\n".join(

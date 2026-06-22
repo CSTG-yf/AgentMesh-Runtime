@@ -50,11 +50,21 @@ class StateConfig(BaseModel):
         return self.payload_backend == "shm"
 
 
+class ProtocolConfig(BaseModel):
+    skip_handshake_for_inproc: bool = True
+    state_summary_max_chars: int = 800
+    evidence_snippet_max_chars: int = 160
+    agent_log_output_max_chars: int = 1200
+    agent_log_param_max_chars: int = 500
+    memory_reuse_default_limit: int = 1
+
+
 class AgentMeshConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     state: StateConfig = Field(default_factory=StateConfig)
+    protocol: ProtocolConfig = Field(default_factory=ProtocolConfig)
     prompt_dir: Path | None = None
 
     @classmethod
@@ -92,6 +102,27 @@ class AgentMeshConfig(BaseModel):
             _first_present(values, "AGENTMESH_STATE_PAYLOAD_BACKEND") or "file",
         )
         state_shm_threshold_raw = _first_present(values, "AGENTMESH_STATE_SHM_THRESHOLD_BYTES")
+        skip_handshake_raw = _first_present(
+            values,
+            "AGENTMESH_PROTOCOL_SKIP_HANDSHAKE_FOR_INPROC",
+        )
+        state_summary_max_raw = _first_present(values, "AGENTMESH_STATE_SUMMARY_MAX_CHARS")
+        evidence_snippet_max_raw = _first_present(
+            values,
+            "AGENTMESH_EVIDENCE_SNIPPET_MAX_CHARS",
+        )
+        agent_log_output_max_raw = _first_present(
+            values,
+            "AGENTMESH_AGENT_LOG_OUTPUT_MAX_CHARS",
+        )
+        agent_log_param_max_raw = _first_present(
+            values,
+            "AGENTMESH_AGENT_LOG_PARAM_MAX_CHARS",
+        )
+        memory_reuse_default_limit_raw = _first_present(
+            values,
+            "AGENTMESH_MEMORY_REUSE_DEFAULT_LIMIT",
+        )
         prompt_dir_raw = _first_present(values, "AGENTMESH_PROMPT_DIR")
         timeout = 30.0
         if timeout_raw:
@@ -112,6 +143,11 @@ class AgentMeshConfig(BaseModel):
         state_shm_threshold = 4096
         if state_shm_threshold_raw:
             state_shm_threshold = int(state_shm_threshold_raw)
+        state_summary_max = _positive_int(state_summary_max_raw, 800)
+        evidence_snippet_max = _positive_int(evidence_snippet_max_raw, 160)
+        agent_log_output_max = _positive_int(agent_log_output_max_raw, 1200)
+        agent_log_param_max = _positive_int(agent_log_param_max_raw, 500)
+        memory_reuse_default_limit = _positive_int(memory_reuse_default_limit_raw, 1)
         return cls(
             llm=LLMConfig(
                 base_url=_first_present(values, "AGENTMESH_LLM_BASE_URL", "OPENAI_BASE_URL"),
@@ -136,6 +172,14 @@ class AgentMeshConfig(BaseModel):
             state=StateConfig(
                 payload_backend=state_payload_backend,
                 shm_threshold_bytes=state_shm_threshold,
+            ),
+            protocol=ProtocolConfig(
+                skip_handshake_for_inproc=_parse_bool(skip_handshake_raw, default=True),
+                state_summary_max_chars=state_summary_max,
+                evidence_snippet_max_chars=evidence_snippet_max,
+                agent_log_output_max_chars=agent_log_output_max,
+                agent_log_param_max_chars=agent_log_param_max,
+                memory_reuse_default_limit=memory_reuse_default_limit,
             ),
             prompt_dir=Path(prompt_dir_raw) if prompt_dir_raw else None,
         )
@@ -169,3 +213,10 @@ def _parse_bool(value: str | None, *, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _positive_int(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    parsed = int(value)
+    return parsed if parsed > 0 else default

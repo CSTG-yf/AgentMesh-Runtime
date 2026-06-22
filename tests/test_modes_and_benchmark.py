@@ -128,6 +128,51 @@ def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -
     assert paths.protocol_states.exists()
 
 
+def test_modes_strip_utf8_bom_from_task_files(tmp_path: Path) -> None:
+    task = tmp_path / "bom_task.txt"
+    task.write_text("Summarize BOM-safe task loading.", encoding="utf-8-sig")
+    paths = RuntimePaths(root=tmp_path)
+
+    text_result = run_text_mode(task_path=task, paths=paths, load_configured_llm=False)
+    protocol_result = run_protocol_mode(task_path=task, paths=paths, load_configured_llm=False)
+
+    assert "\ufeff" not in read_jsonl(paths.text_agent_io)[0]["input"]["content"]
+    protocol_params = read_jsonl(paths.protocol_agent_io)[0]["input"]["params"]
+    assert "\ufeff" not in str(protocol_params)
+    assert text_result.answer
+    assert protocol_result.answer
+
+
+def test_protocol_mode_skips_inproc_handshake_by_default(tmp_path: Path) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Summarize protocol state passing.", encoding="utf-8")
+    paths = RuntimePaths(root=tmp_path)
+
+    run_protocol_mode(task_path=task, paths=paths, load_configured_llm=False)
+
+    messages = read_jsonl(paths.protocol_messages)
+    assert not any(item.get("msg_type") == "HELLO" for item in messages)
+    assert not any(item.get("msg_type") == "CAPABILITY_ADVERTISE" for item in messages)
+    assert not any(item.get("action") == "protocol.map" for item in messages)
+
+
+def test_protocol_mode_can_keep_handshake_for_protocol_validation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AGENTMESH_PROTOCOL_SKIP_HANDSHAKE_FOR_INPROC", "false")
+    task = tmp_path / "task.txt"
+    task.write_text("Summarize protocol state passing.", encoding="utf-8")
+    paths = RuntimePaths(root=tmp_path)
+
+    run_protocol_mode(task_path=task, paths=paths, load_configured_llm=False)
+
+    messages = read_jsonl(paths.protocol_messages)
+    assert any(item.get("msg_type") == "HELLO" for item in messages)
+    assert any(item.get("msg_type") == "CAPABILITY_ADVERTISE" for item in messages)
+    assert any(item.get("action") == "protocol.map" for item in messages)
+
+
 def test_protocol_mode_can_use_shared_memory_state_payloads(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         "\n".join(
@@ -185,6 +230,11 @@ tasks:
     assert summary.token_estimator == "mixed_cjk"
     assert summary.text_wire_bytes > 0
     assert summary.protocol_wire_bytes > 0
+    assert summary.protocol_agent_io_bytes > 0
+    assert summary.fair_wire_reduction_rate != 0
+    assert summary.agent_io_bytes_reduction_rate != 0
+    assert summary.memory_evidence_count >= 0
+    assert summary.memory_evidence_bytes >= 0
     assert summary.protocol_session_dictionary_bytes > 0
     assert summary.protocol_typed_envelope_bytes > 0
     assert summary.protocol_typed_payload_bytes > 0
@@ -204,7 +254,13 @@ tasks:
     assert "TokenEstimator" in report_text
     assert "TokenSavingRate" in report_text
     assert "WireBytesReductionRate" in report_text
+    assert "FairWireReductionRate" in report_text
+    assert "AgentIoBytesReductionRate" in report_text
+    assert "ProtocolAgentIoBytes" in report_text
     assert "MemoryAvgReusedUnitsPerQuery" in report_text
+    assert "MemoryEvidenceCount" in report_text
+    assert "MemoryEvidenceBytes" in report_text
+    assert "MemoryAvgEvidenceBytesPerQuery" in report_text
     assert "MemoryAvgScore" in report_text
     assert "MemoryAvgSemanticSimilarity" in report_text
     assert "MemoryAvgTagOverlapScore" in report_text
@@ -281,6 +337,53 @@ tasks:
     assert paths.benchmark_suite_summary("suite_b").exists()
     assert paths.benchmark_suite_detail("suite_a").exists()
     assert paths.benchmark_suite_detail("suite_b").exists()
+
+
+def test_benchmark_rerun_overwrites_same_suite_artifacts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Explain protocol memory reuse.", encoding="utf-8")
+    suite = tmp_path / "suite.yaml"
+    suite.write_text(
+        """
+name: repeated_suite
+tasks:
+  - id: T1
+    group: T
+    topic: protocol memory
+    input_file: task.txt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def fake_text_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="text",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100),
+        )
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="protocol",
+            metrics=RunMetrics(estimated_tokens=5, wire_bytes=50),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol_mode)
+
+    paths = RuntimePaths(root=tmp_path)
+    run_benchmark(suite_path=suite, paths=paths, use_llm=False)
+    run_benchmark(suite_path=suite, paths=paths, use_llm=False)
+
+    assert len(read_jsonl(paths.benchmark_suite_detail("repeated_suite"))) == 2
 
 
 def test_benchmark_uses_configured_llm_for_both_modes_by_default(
@@ -483,11 +586,19 @@ tasks:
     paths = RuntimePaths(root=tmp_path)
     paths.ensure()
     paths.memory_db.write_text("stale run memory", encoding="utf-8")
-    calls: list[tuple[str, bool]] = []
+    calls: list[tuple[str, bool, bool]] = []
+
+    def stale_memory_file_present(paths: RuntimePaths) -> bool:
+        try:
+            return paths.memory_db.read_text(encoding="utf-8") == "stale run memory"
+        except UnicodeDecodeError:
+            return False
+        except FileNotFoundError:
+            return False
 
     def fake_text_mode(*, task_path, paths, load_configured_llm=True):
         del task_path, load_configured_llm
-        calls.append(("text", paths.memory_db.exists()))
+        calls.append(("text", paths.memory_db.exists(), stale_memory_file_present(paths)))
         return ModeRunResult(
             mode="text",
             trace_id="trace-text",
@@ -497,7 +608,7 @@ tasks:
 
     def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
         del task_path, load_configured_llm
-        calls.append(("protocol", paths.memory_db.exists()))
+        calls.append(("protocol", paths.memory_db.exists(), stale_memory_file_present(paths)))
         return ModeRunResult(
             mode="protocol",
             trace_id="trace-protocol",
@@ -516,7 +627,8 @@ tasks:
         progress_callback=events.append,
     )
 
-    assert calls == [("text", False), ("protocol", False)]
+    assert [call[0] for call in calls] == ["text", "protocol"]
+    assert all(stale_present is False for _mode, _exists, stale_present in calls)
     assert any(event.phase == "cold_start" for event in events)
     mode_event = next(event for event in events if event.phase == "mode_complete")
     assert mode_event.cold_start is True

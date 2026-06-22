@@ -68,15 +68,9 @@ class RetrieverAgent(BaseAgent):
         evidence.extend(
             {
                 "title": result.memory.task_topic,
-                "snippet": result.memory.summary,
+                "snippet": _compact_snippet(result.memory.summary, 300),
                 "memory_id": result.memory.memory_id,
                 "memory_score": round(float(result.score), 4),
-                "semantic_similarity": round(float(result.semantic_similarity), 4),
-                "tag_overlap_score": round(float(result.tag_overlap_score), 4),
-                "reason": result.reason,
-                "reuse_hint": "This memory was reused from a similar prior task. "
-                              "Use its content directly as reference context "
-                              "instead of recomputing from scratch.",
             }
             for result in memory_results
         )
@@ -101,7 +95,12 @@ def _memory_results(
     if not query:
         return []
     if context.memory_store is not None:
-        return _run_memory_search(context.memory_store, query, query_tags)
+        return _run_memory_search(
+            context.memory_store,
+            query,
+            query_tags,
+            default_limit=context.config.protocol.memory_reuse_default_limit,
+        )
     state_store = StateStore(
         context.paths,
         payload_backend=context.config.state.payload_backend,
@@ -113,19 +112,41 @@ def _memory_results(
             state_store=state_store,
             encoder=create_embedding_encoder(context.config.embedding),
         )
-        return _run_memory_search(store, query, query_tags)
+        return _run_memory_search(
+            store,
+            query,
+            query_tags,
+            default_limit=context.config.protocol.memory_reuse_default_limit,
+        )
     finally:
         state_store.close()
+
+
+def _compact_snippet(text: str, limit: int) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: max(0, limit - 1)]}…"
 
 
 def _run_memory_search(
     store: HybridMemoryStore,
     query: str,
     query_tags: list[str],
+    default_limit: int = 1,
 ) -> list[MemorySearchResult]:
+    limit = _memory_reuse_limit(
+        query=query,
+        query_tags=query_tags,
+        default_limit=default_limit,
+    )
     results = [
         result
-        for result in store.semantic_search_with_scores(query, query_tags=query_tags)
+        for result in store.semantic_search_with_scores(
+            query,
+            limit=limit,
+            query_tags=query_tags,
+        )
         if _should_reuse_memory_result(
             score=float(result.score),
             semantic_similarity=float(result.semantic_similarity),
@@ -136,6 +157,29 @@ def _run_memory_search(
     for result in results:
         store.increment_reuse(result.memory.memory_id)
     return results
+
+
+def _memory_reuse_limit(*, query: str, query_tags: list[str]) -> int:
+    lowered = query.lower()
+    if query_tags == ["general"]:
+        return 1
+    if any(term in lowered for term in ["memory", "reuse", "prior", "remember", "记忆", "复用"]):
+        return 3
+    return 2
+
+
+def _memory_reuse_limit(
+    *,
+    query: str,
+    query_tags: list[str],
+    default_limit: int = 1,
+) -> int:
+    lowered = query.lower()
+    if query_tags == ["general"]:
+        return 1
+    if any(term in lowered for term in ["memory", "reuse", "prior", "remember", "记忆", "复用"]):
+        return max(1, min(2, default_limit + 1))
+    return max(1, default_limit)
 
 
 def _memory_hit_log_item(result: MemorySearchResult) -> dict[str, object]:
@@ -218,11 +262,11 @@ def _should_reuse_memory_result(
     hits (e.g. "write a quicksort" hitting a prior quicksort record).
     """
     if query_tags == ["general"]:
-        return semantic_similarity >= 0.40 and score >= 0.55
-    if tag_overlap_score >= 0.5 and score >= 0.35:
-        return True
-    if tag_overlap_score > 0 and score >= 0.35:
-        return semantic_similarity >= 0.20
-    if query_tags and tag_overlap_score <= 0:
-        return semantic_similarity >= 0.60 and score >= 0.60
-    return semantic_similarity >= 0.45 and score >= 0.55
+        return semantic_similarity >= 0.55 and score >= 0.60
+    if tag_overlap_score >= 0.5:
+        return semantic_similarity >= 0.45 and score >= 0.55
+    if tag_overlap_score > 0:
+        return semantic_similarity >= 0.55 and score >= 0.60
+    if query_tags:
+        return semantic_similarity >= 0.72 and score >= 0.70
+    return semantic_similarity >= 0.60 and score >= 0.65

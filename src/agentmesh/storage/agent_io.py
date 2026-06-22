@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import orjson
+
 from agentmesh.storage.jsonl import append_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
@@ -58,6 +60,8 @@ def append_protocol_agent_io(
     state_refs_in: list[str],
     state_refs_out: list[str],
     result_msg_type: str,
+    max_param_chars: int = 500,
+    max_result_chars: int = 1200,
 ) -> None:
     append_jsonl(
         paths.protocol_agent_io,
@@ -70,12 +74,12 @@ def append_protocol_agent_io(
             "target_agent": agent,
             "input": {
                 "action": action,
-                "params": params,
+                "params": _compact_payload(params, max_chars=max_param_chars),
                 "state_refs": state_refs_in,
             },
             "output": {
                 "msg_type": result_msg_type,
-                "result": result,
+                "result": _compact_payload(result, max_chars=max_result_chars),
                 "state_refs": state_refs_out,
             },
             "state_refs_in": state_refs_in,
@@ -86,3 +90,37 @@ def append_protocol_agent_io(
             },
         },
     )
+
+
+def _compact_payload(value: Any, *, max_chars: int) -> Any:
+    if isinstance(value, str):
+        return _clip_text(value, max_chars)
+    if isinstance(value, list):
+        return [_compact_payload(item, max_chars=max_chars) for item in value]
+    if isinstance(value, dict):
+        compacted = {
+            str(key): _compact_payload(item, max_chars=max_chars)
+            for key, item in value.items()
+        }
+        if _json_chars(compacted) <= max_chars * 3:
+            return compacted
+        return {
+            str(key): _compact_payload(item, max_chars=max(80, max_chars // 2))
+            for key, item in value.items()
+            if key not in {"llm_plan", "llm_summary", "codeact_code", "generated_files"}
+        }
+    return value
+
+
+def _clip_text(text: str, limit: int) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: max(0, limit - 1)]}..."
+
+
+def _json_chars(value: Any) -> int:
+    try:
+        return len(orjson.dumps(value).decode("utf-8"))
+    except TypeError:
+        return len(str(value))

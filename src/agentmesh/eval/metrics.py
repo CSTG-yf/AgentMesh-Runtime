@@ -37,6 +37,8 @@ class RunMetrics(BaseModel):
     memory_hit_count: int = 0
     memory_query_hit_count: int = 0
     memory_reused_unit_count: int = 0
+    memory_evidence_count: int = 0
+    memory_evidence_bytes: int = 0
     memory_avg_score: float = 0.0
     memory_avg_semantic_similarity: float = 0.0
     memory_avg_tag_overlap_score: float = 0.0

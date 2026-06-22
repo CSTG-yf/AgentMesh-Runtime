@@ -3,6 +3,7 @@ from pathlib import Path
 from agentmesh.eval.compare import CompareProgressEvent, run_prompt_compare
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.storage.agent_io import append_protocol_agent_io, append_text_agent_io
+from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
 
@@ -183,6 +184,8 @@ def test_prompt_compare_uses_agent_io_metrics_for_savings(
 
     assert summary.token_saving_rate == 0.6
     assert summary.wire_bytes_reduction_rate == 0.5
+    assert summary.fair_wire_reduction_rate == (9999 - 1) / 9999
+    assert summary.agent_io_bytes_reduction_rate == 0.75
     assert summary.quality_preservation_rate == 0.75
 
 
@@ -365,3 +368,37 @@ def test_prompt_compare_progress_only_streams_current_trace(
     ]
     assert [item.output for item in summary.text_agent_outputs] == ["current text output"]
     assert "current protocol output" in summary.protocol_agent_outputs[0].output
+
+
+def test_protocol_agent_io_compacts_large_params_and_results(tmp_path: Path) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    long_text = "x" * 5000
+
+    append_protocol_agent_io(
+        paths=paths,
+        trace_id="trace-compact",
+        step=1,
+        source_agent="runtime",
+        agent="summarizer",
+        action="summary.create",
+        params={"task": long_text},
+        result={
+            "summary": long_text,
+            "llm_summary": long_text,
+            "codeact_code": long_text,
+            "generated_files": [{"path": "generated.py", "content": long_text}],
+        },
+        state_refs_in=["state://task"],
+        state_refs_out=["state://summary"],
+        result_msg_type="RESULT",
+        max_param_chars=80,
+        max_result_chars=120,
+    )
+
+    row = read_jsonl(paths.protocol_agent_io)[0]
+
+    assert len(row["input"]["params"]["task"]) < 120
+    result = row["output"]["result"]
+    assert len(result["summary"]) < 160
+    assert "llm_summary" not in result
+    assert "codeact_code" not in result

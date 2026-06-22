@@ -183,9 +183,9 @@ def test_executor_rejects_invalid_llm_code_before_codeact(tmp_path: Path) -> Non
     assert result.result["llm_generated_code"] is False
 
 
-def test_protocol_mode_hands_off_task_by_state_ref_not_full_params(tmp_path: Path) -> None:
+def test_protocol_mode_hands_off_long_task_by_compact_params(tmp_path: Path) -> None:
     task = tmp_path / "task.txt"
-    task_text = "Write Python code that validates a small task."
+    task_text = "Write Python code that validates a small task. " * 40
     task.write_text(task_text, encoding="utf-8")
     paths = RuntimePaths(root=tmp_path)
 
@@ -198,4 +198,8 @@ def test_protocol_mode_hands_off_task_by_state_ref_not_full_params(tmp_path: Pat
         params = item["input"]["params"]
         assert params.get("task") != task_text
         assert task_text not in str(params)
+        if "task" in params:
+            assert len(params["task"]) <= 500
+        if "query" in params:
+            assert len(params["query"]) <= 300
         assert item["state_refs_in"]

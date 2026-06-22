@@ -47,11 +47,16 @@ class CompareSummary(BaseModel):
     token_saving_rate: float
     latency_reduction_rate: float
     wire_bytes_reduction_rate: float
+    fair_wire_reduction_rate: float = 0.0
+    agent_io_bytes_reduction_rate: float = 0.0
     quality_preservation_rate: float = 1.0
     memory_hit_rate: float
     memory_query_count: int = 0
     memory_query_hit_count: int = 0
     memory_reused_unit_count: int = 0
+    memory_evidence_count: int = 0
+    memory_evidence_bytes: int = 0
+    memory_avg_evidence_bytes_per_query: float = 0.0
     memory_avg_reused_units_per_query: float = 0.0
     memory_avg_score: float = 0.0
     memory_avg_semantic_similarity: float = 0.0
@@ -280,6 +285,14 @@ def _build_summary(
             _byte_metric(text_result.metrics),
             _byte_metric(protocol_result.metrics),
         ),
+        fair_wire_reduction_rate=_rate(
+            text_result.metrics.wire_bytes,
+            protocol_result.metrics.wire_bytes,
+        ),
+        agent_io_bytes_reduction_rate=_rate(
+            text_result.metrics.agent_io_bytes,
+            protocol_result.metrics.agent_io_bytes,
+        ),
         quality_preservation_rate=_quality_preservation_rate(
             text_result.metrics,
             protocol_result.metrics,
@@ -294,6 +307,14 @@ def _build_summary(
             )
         ),
         memory_reused_unit_count=protocol_result.metrics.memory_reused_unit_count,
+        memory_evidence_count=protocol_result.metrics.memory_evidence_count,
+        memory_evidence_bytes=protocol_result.metrics.memory_evidence_bytes,
+        memory_avg_evidence_bytes_per_query=(
+            protocol_result.metrics.memory_evidence_bytes
+            / protocol_result.metrics.memory_query_count
+            if protocol_result.metrics.memory_query_count
+            else 0.0
+        ),
         memory_avg_reused_units_per_query=(
             protocol_result.metrics.memory_reused_unit_count
             / protocol_result.metrics.memory_query_count

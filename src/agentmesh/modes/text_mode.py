@@ -23,7 +23,7 @@ def run_text_mode(
 ) -> ModeRunResult:
     paths.ensure()
     trace_id = trace_id or f"trace-{uuid4().hex[:12]}"
-    task = task_path.read_text(encoding="utf-8")
+    task = task_path.read_text(encoding="utf-8-sig")
     runtime_context = RuntimeContext.from_paths(
         paths=paths,
         task_path=task_path,

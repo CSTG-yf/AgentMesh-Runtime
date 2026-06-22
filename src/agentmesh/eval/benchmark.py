@@ -23,11 +23,14 @@ class BenchmarkSummary(BaseModel):
     token_estimator: str
     token_saving_rate: float
     wire_bytes_reduction_rate: float
+    fair_wire_reduction_rate: float = 0.0
+    agent_io_bytes_reduction_rate: float = 0.0
     text_agent_io_tokens: int = 0
     protocol_agent_io_tokens: int = 0
     text_per_msg_avg_tokens: float = 0.0
     protocol_per_msg_avg_tokens: float = 0.0
     text_agent_io_bytes: int = 0
+    protocol_agent_io_bytes: int = 0
     protocol_total_bytes: int = 0
     text_wire_bytes: int
     protocol_wire_bytes: int
@@ -40,6 +43,9 @@ class BenchmarkSummary(BaseModel):
     latency_reduction_rate: float
     memory_hit_rate: float
     memory_reused_unit_count: int
+    memory_evidence_count: int = 0
+    memory_evidence_bytes: int = 0
+    memory_avg_evidence_bytes_per_query: float = 0.0
     memory_avg_reused_units_per_query: float
     memory_avg_score: float
     memory_avg_semantic_similarity: float
@@ -92,6 +98,7 @@ def run_benchmark(
     suite = _load_suite(suite_path)
     _reset_runtime_working_dirs(paths)
     paths.ensure()
+    _reset_run_memory(paths)
     previous_global_memory_setting = os.environ.get("AGENTMESH_DISABLE_GLOBAL_MEMORY")
     os.environ["AGENTMESH_DISABLE_GLOBAL_MEMORY"] = "1"
     repeat = int(suite.get("repeat", 1))
@@ -101,6 +108,8 @@ def run_benchmark(
     suite_name = str(suite.get("name", suite_path.stem))
     detail_path = paths.benchmark_suite_detail(suite_name)
     summary_path = paths.benchmark_suite_summary(suite_name)
+    report_path = paths.benchmark_suite_report(suite_name)
+    _reset_suite_artifacts(summary_path, detail_path, report_path)
     total_tasks = repeat * len(tasks)
     total_stages = total_tasks * 2
     _emit_progress(
@@ -121,6 +130,7 @@ def run_benchmark(
     text_wire_bytes = 0
     protocol_wire_bytes = 0
     text_agent_io_bytes = 0
+    protocol_agent_io_bytes = 0
     protocol_total_bytes = 0
     protocol_session_dictionary_bytes = 0
     protocol_typed_envelope_bytes = 0
@@ -133,6 +143,8 @@ def run_benchmark(
     memory_queries = 0
     memory_query_hits = 0
     memory_reused_units = 0
+    memory_evidence_count = 0
+    memory_evidence_bytes = 0
     memory_score_weighted_total = 0.0
     memory_semantic_weighted_total = 0.0
     memory_tag_overlap_weighted_total = 0.0
@@ -226,6 +238,7 @@ def run_benchmark(
             text_wire_bytes += text_result.metrics.wire_bytes
             protocol_wire_bytes += protocol_result.metrics.wire_bytes
             text_agent_io_bytes += text_result.metrics.agent_io_bytes
+            protocol_agent_io_bytes += protocol_result.metrics.agent_io_bytes
             protocol_total_bytes += _byte_metric(protocol_result.metrics)
             protocol_session_dictionary_bytes += (
                 protocol_result.metrics.session_dictionary_bytes
@@ -245,6 +258,8 @@ def run_benchmark(
                 protocol_result.metrics.memory_query_count,
             )
             memory_reused_units += protocol_result.metrics.memory_reused_unit_count
+            memory_evidence_count += protocol_result.metrics.memory_evidence_count
+            memory_evidence_bytes += protocol_result.metrics.memory_evidence_bytes
             memory_score_weighted_total += (
                 protocol_result.metrics.memory_avg_score
                 * protocol_result.metrics.memory_reused_unit_count
@@ -302,6 +317,11 @@ def run_benchmark(
             text_agent_io_bytes or text_wire_bytes,
             protocol_total_bytes or protocol_wire_bytes,
         ),
+        fair_wire_reduction_rate=_rate(text_wire_bytes, protocol_wire_bytes),
+        agent_io_bytes_reduction_rate=_rate(
+            text_agent_io_bytes,
+            protocol_agent_io_bytes,
+        ),
         text_agent_io_tokens=text_tokens,
         protocol_agent_io_tokens=protocol_tokens,
         text_per_msg_avg_tokens=(
@@ -311,6 +331,7 @@ def run_benchmark(
             protocol_tokens / protocol_msg_count if protocol_msg_count else 0.0
         ),
         text_agent_io_bytes=text_agent_io_bytes,
+        protocol_agent_io_bytes=protocol_agent_io_bytes,
         protocol_total_bytes=protocol_total_bytes,
         text_wire_bytes=text_wire_bytes,
         protocol_wire_bytes=protocol_wire_bytes,
@@ -323,6 +344,11 @@ def run_benchmark(
         latency_reduction_rate=_rate(text_latency, protocol_latency),
         memory_hit_rate=memory_query_hits / memory_queries if memory_queries else 0.0,
         memory_reused_unit_count=memory_reused_units,
+        memory_evidence_count=memory_evidence_count,
+        memory_evidence_bytes=memory_evidence_bytes,
+        memory_avg_evidence_bytes_per_query=(
+            memory_evidence_bytes / memory_queries if memory_queries else 0.0
+        ),
         memory_avg_reused_units_per_query=(
             memory_reused_units / memory_queries if memory_queries else 0.0
         ),
@@ -432,16 +458,24 @@ def _reset_run_memory(paths: RuntimePaths) -> None:
     db = paths.memory_db
     if not db.exists():
         return
+    if not _looks_like_sqlite(db):
+        _unlink_if_available(db)
+        return
     try:
         with sqlite3.connect(db) as conn:
-            conn.execute("DELETE FROM memory_fts")
-            conn.execute("DELETE FROM memory_units")
+            tables = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            if "memory_fts" in tables:
+                conn.execute("DELETE FROM memory_fts")
+            if "memory_units" in tables:
+                conn.execute("DELETE FROM memory_units")
             conn.execute("VACUUM")
     except sqlite3.DatabaseError:
-        try:
-            db.unlink()
-        except PermissionError:
-            pass
+        _unlink_if_available(db)
 
 
 def _reset_runtime_working_dirs(paths: RuntimePaths) -> None:
@@ -454,8 +488,20 @@ def _reset_runtime_working_dirs(paths: RuntimePaths) -> None:
 def _reset_data_dir(paths: RuntimePaths) -> None:
     if paths.state_payload_dir.exists():
         shutil.rmtree(paths.state_payload_dir, ignore_errors=True)
-    _unlink_if_available(paths.memory_db)
+    _reset_run_memory(paths)
     _unlink_if_available(paths.state_index)
+
+
+def _reset_suite_artifacts(*paths: Path) -> None:
+    for path in paths:
+        _unlink_if_available(path)
+
+
+def _looks_like_sqlite(path: Path) -> bool:
+    try:
+        return path.read_bytes()[:16] == b"SQLite format 3\x00"
+    except OSError:
+        return False
 
 
 def _unlink_if_available(path: Path) -> None:

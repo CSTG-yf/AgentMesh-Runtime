@@ -1,3 +1,7 @@
+from typing import Any
+
+import orjson
+
 from agentmesh.errors import ProtocolError
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.schema import AMPMessage
@@ -54,7 +58,15 @@ class ProtocolScheduler:
         )
         self.messages.append(message)
         result = self.transport.send(message)
-        self.messages.append(result)
+        compact_result = result.model_copy(
+            update={
+                "result": _compact_protocol_result(
+                    result.result,
+                    max_chars=self.context.config.protocol.agent_log_output_max_chars,
+                )
+            }
+        )
+        self.messages.append(compact_result)
         append_protocol_agent_io(
             paths=self.context.paths,
             trace_id=self.context.trace_id,
@@ -63,10 +75,12 @@ class ProtocolScheduler:
             agent=agent.name,
             action=action,
             params=message.params,
-            result=result.result,
+            result=compact_result.result,
             state_refs_in=message.state_refs,
             state_refs_out=result.state_refs,
-            result_msg_type=result.msg_type.value,
+            result_msg_type=compact_result.msg_type.value,
+            max_param_chars=self.context.config.protocol.agent_log_param_max_chars,
+            max_result_chars=self.context.config.protocol.agent_log_output_max_chars,
         )
         self.selected_agents.append(agent.name)
         return result
@@ -80,3 +94,73 @@ class ProtocolScheduler:
         if action in set(self.protocol_map.values()):
             return
         raise ProtocolError(f"Action {action} is not allowed by the protocol map")
+
+
+def _compact_protocol_result(result: dict[str, Any], *, max_chars: int) -> dict[str, Any]:
+    compacted: dict[str, Any] = {}
+    for key, value in result.items():
+        if key in {"llm_plan", "llm_summary"}:
+            compacted[f"{key}_preview"] = _clip_text(str(value), max_chars)
+            compacted[f"{key}_chars"] = len(str(value))
+            continue
+        if key == "codeact_code":
+            code = str(value)
+            compacted["codeact_code_preview"] = _clip_text(code, max(200, max_chars // 2))
+            compacted["codeact_code_chars"] = len(code)
+            continue
+        if key == "generated_files" and isinstance(value, list):
+            compacted[key] = _compact_generated_files(value, max_chars=max_chars)
+            continue
+        compacted[str(key)] = _compact_value(value, max_chars=max_chars)
+    return compacted
+
+
+def _compact_generated_files(files: list[Any], *, max_chars: int) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content", ""))
+        compacted.append(
+            {
+                "path": item.get("path", ""),
+                "language": item.get("language", ""),
+                "content_preview": _clip_text(content, max(120, max_chars // 4)),
+                "content_chars": len(content),
+            }
+        )
+    return compacted
+
+
+def _compact_value(value: Any, *, max_chars: int) -> Any:
+    if isinstance(value, str):
+        return _clip_text(value, max_chars)
+    if isinstance(value, list):
+        return [_compact_value(item, max_chars=max_chars) for item in value]
+    if isinstance(value, dict):
+        compacted = {
+            str(key): _compact_value(item, max_chars=max_chars)
+            for key, item in value.items()
+        }
+        if _json_chars(compacted) <= max_chars * 3:
+            return compacted
+        return {
+            str(key): _compact_value(item, max_chars=max(80, max_chars // 2))
+            for key, item in value.items()
+            if key not in {"code", "content", "stdout", "stderr"}
+        }
+    return value
+
+
+def _clip_text(text: str, limit: int) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: max(0, limit - 3)]}..."
+
+
+def _json_chars(value: Any) -> int:
+    try:
+        return len(orjson.dumps(value).decode("utf-8"))
+    except TypeError:
+        return len(str(value))

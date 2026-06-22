@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from agentmesh.agents.retriever import _memory_reuse_limit, _should_reuse_memory_result
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.modes.protocol_mode import run_protocol_mode
@@ -90,3 +91,38 @@ def test_protocol_mode_records_generic_code_task_memory(tmp_path: Path) -> None:
     assert "executor" in result.metrics.selected_agents
     assert result.metrics.memory_query_count == 1
     assert paths.memory_db.exists()
+
+
+def test_memory_retriever_limits_general_and_explicit_reuse_queries() -> None:
+    assert _memory_reuse_limit(query="hello", query_tags=["general"]) == 1
+    assert _memory_reuse_limit(query="复用之前的 protocol memory", query_tags=["protocol"]) == 2
+    assert _memory_reuse_limit(query="Explain protocol routing", query_tags=["protocol"]) == 1
+    assert (
+        _memory_reuse_limit(
+            query="Explain protocol routing",
+            query_tags=["protocol"],
+            default_limit=2,
+        )
+        == 2
+    )
+
+
+def test_memory_retriever_requires_stronger_similarity_for_unmatched_tags() -> None:
+    assert not _should_reuse_memory_result(
+        score=0.69,
+        semantic_similarity=0.71,
+        tag_overlap_score=0.0,
+        query_tags=["dynamic-programming"],
+    )
+    assert _should_reuse_memory_result(
+        score=0.71,
+        semantic_similarity=0.73,
+        tag_overlap_score=0.0,
+        query_tags=["dynamic-programming"],
+    )
+    assert not _should_reuse_memory_result(
+        score=0.59,
+        semantic_similarity=0.54,
+        tag_overlap_score=0.0,
+        query_tags=["general"],
+    )
