@@ -9,6 +9,8 @@ from agentmesh.state.embedding import (
     TEIEmbeddingEncoder,
     cosine_similarity,
     create_embedding_encoder,
+    is_semantic_encoder,
+    supports_vector_ranking,
 )
 from agentmesh.state.schema import StateType
 from agentmesh.state.store import StateStore
@@ -27,6 +29,13 @@ def test_hash_embedding_is_deterministic_normalized_and_semantic_enough() -> Non
     assert abs(sum(value * value for value in first) - 1.0) < 1e-9
     assert cosine_similarity(first, similar) > cosine_similarity(first, unrelated)
     assert encoder.encode("") == [0.0] * 384
+
+
+def test_hash_embedding_supports_lexical_vector_ranking() -> None:
+    encoder = HashEmbeddingEncoder()
+
+    assert supports_vector_ranking(encoder)
+    assert not is_semantic_encoder(encoder)
 
 
 def test_hash_embedding_handles_chinese_text() -> None:

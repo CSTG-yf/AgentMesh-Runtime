@@ -30,6 +30,11 @@ def is_semantic_encoder(encoder: object) -> bool:
     return False
 
 
+def supports_vector_ranking(encoder: object) -> bool:
+    """Return True when an encoder produces stable vectors suitable for ranking."""
+    return isinstance(encoder, (HashEmbeddingEncoder, TEIEmbeddingEncoder))
+
+
 class HashEmbeddingEncoder:
     provider = "hash"
 

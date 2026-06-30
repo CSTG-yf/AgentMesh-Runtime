@@ -136,3 +136,69 @@ def test_semantic_search_uses_rust_memory_ranking_when_available(
     assert results[0].memory.task_topic == "ranking"
     assert results[0].score == 0.88
     assert results[0].semantic_similarity == 0.77
+
+
+def test_rust_and_python_memory_ranking_choose_same_top_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    state_store = StateStore(paths)
+    encoder = HashEmbeddingEncoder()
+    store = SQLiteMemoryStore(paths, state_store, encoder)
+    for topic, text in [
+        ("runtime", "structured runtime state transfer"),
+        ("travel", "mountain travel weather"),
+    ]:
+        store.put(
+            MemoryUnit(
+                source_agent="tester",
+                task_topic=topic,
+                summary=text,
+                embedding_vector=encoder.encode(text),
+                confidence=0.9,
+                validity_score=0.9,
+                provenance_trace_id=f"trace-{topic}",
+            )
+        )
+
+    monkeypatch.setattr(
+        "agentmesh.memory.sqlite_store._rust_memory_rank_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "agentmesh.memory.sqlite_store.rust_available",
+        lambda: False,
+    )
+    python_top = store.semantic_search("runtime state", limit=1)[0]
+
+    class FakeRustCore:
+        def memory_rank_top_k(
+            self,
+            query: list[float],
+            vectors: list[list[float]],
+            *_args: object,
+        ) -> list[tuple[int, float, float]]:
+            ranked = [
+                (index, sum(a * b for a, b in zip(query, vector, strict=True)))
+                for index, vector in enumerate(vectors)
+            ]
+            ranked.sort(key=lambda item: item[1], reverse=True)
+            return [(index, score, score) for index, score in ranked]
+
+    monkeypatch.setattr(
+        "agentmesh.memory.sqlite_store._rust_memory_rank_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "agentmesh.memory.sqlite_store.rust_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "agentmesh.memory.sqlite_store.rust_core",
+        lambda: FakeRustCore(),
+    )
+    rust_top = store.semantic_search("runtime state", limit=1)[0]
+
+    assert python_top.memory_id == rust_top.memory_id
+    assert python_top.task_topic == rust_top.task_topic == "runtime"
