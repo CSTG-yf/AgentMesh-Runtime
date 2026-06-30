@@ -33,6 +33,20 @@ class TextModeFailingSummarizerLLM(LLMClient):
         return f"{agent_name} output"
 
 
+def test_benchmark_artifacts_are_isolated_by_track(tmp_path: Path) -> None:
+    paths = RuntimePaths(root=tmp_path)
+
+    deterministic = paths.benchmark_suite_summary("suite", track="deterministic")
+    llm = paths.benchmark_suite_summary("suite", track="llm")
+
+    assert deterministic != llm
+    assert deterministic.as_posix().endswith(
+        "benchmarks/suite/deterministic/benchmark_summary.csv"
+    )
+    assert llm.as_posix().endswith("benchmarks/suite/llm/benchmark_summary.csv")
+    assert paths.benchmark_suite_manifest("suite", track="llm").name == "manifest.json"
+
+
 def test_protocol_mode_runs_ten_continuous_tasks_without_cross_trace_state(
     tmp_path: Path,
 ) -> None:
