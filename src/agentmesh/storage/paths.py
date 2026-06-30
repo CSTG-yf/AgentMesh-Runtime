@@ -97,29 +97,45 @@ class RuntimePaths(BaseModel):
     def benchmark_dir(self) -> Path:
         return self.latest_run / "benchmarks"
 
-    def benchmark_suite_dir(self, suite_name: str) -> Path:
-        return self.benchmark_dir / _slugify_path_name(suite_name)
+    def benchmark_suite_dir(self, suite_name: str, track: str | None = None) -> Path:
+        suite_dir = self.benchmark_dir / _slugify_path_name(suite_name)
+        return suite_dir / _slugify_path_name(track) if track else suite_dir
 
     @property
     def benchmark_summary(self) -> Path:
         return self.latest_run / "benchmark_summary.csv"
 
-    def benchmark_suite_summary(self, suite_name: str) -> Path:
-        return self.benchmark_suite_dir(suite_name) / "benchmark_summary.csv"
+    def benchmark_suite_summary(
+        self,
+        suite_name: str,
+        track: str | None = None,
+    ) -> Path:
+        return self.benchmark_suite_dir(suite_name, track) / "benchmark_summary.csv"
 
     @property
     def benchmark_detail(self) -> Path:
         return self.latest_run / "benchmark_detail.jsonl"
 
-    def benchmark_suite_detail(self, suite_name: str) -> Path:
-        return self.benchmark_suite_dir(suite_name) / "benchmark_detail.jsonl"
+    def benchmark_suite_detail(
+        self,
+        suite_name: str,
+        track: str | None = None,
+    ) -> Path:
+        return self.benchmark_suite_dir(suite_name, track) / "benchmark_detail.jsonl"
 
     @property
     def experiment_report(self) -> Path:
         return self.latest_run / "experiment_report.md"
 
-    def benchmark_suite_report(self, suite_name: str) -> Path:
-        return self.benchmark_suite_dir(suite_name) / "experiment_report.md"
+    def benchmark_suite_report(
+        self,
+        suite_name: str,
+        track: str | None = None,
+    ) -> Path:
+        return self.benchmark_suite_dir(suite_name, track) / "experiment_report.md"
+
+    def benchmark_suite_manifest(self, suite_name: str, track: str) -> Path:
+        return self.benchmark_suite_dir(suite_name, track) / "manifest.json"
 
     @classmethod
     def cwd(cls) -> "RuntimePaths":

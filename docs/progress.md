@@ -26,6 +26,25 @@
 | 21 | Shell `/ask` and bare-text input stream Protocol Mode agent outputs before the final answer | Completed | `tests/test_shell.py::test_shell_ask_streams_protocol_agent_outputs` |
 | 22 | Review hardening: agents dereference StateRefs, RetrieverAgent owns memory search, and route normalization uses capability advertisements | Completed | `tests/test_agent_state_refs.py`, `tests/test_dynamic_agent_routing.py::test_planner_decision_normalizes_route_from_capability_advertisements`, `tests/test_hybrid_memory.py` |
 | 23 | P0 engineering baseline: AgentShell regression contract, CodeAct state schema, memory ranking, static quality, and ten-round stability | Completed | `uv run ruff check .`, `uv run mypy src`, `uv run pytest` |
+| 24 | P1 reproducible benchmark: track isolation, immutable manifest, paired ordering, task hashes, and distribution statistics | Completed | `tests/test_experiment_manifest.py`, `tests/test_benchmark_statistics.py`, `tests/test_modes_and_benchmark.py`, `tests/test_benchmark_dashboard.py` |
+
+## 2026-06-30 P1 Reproducible Benchmark
+
+- Benchmark schema `2.0` records experiment ID, suite/task SHA-256, track,
+  repeat index, pair order, seed, and a secret-free environment summary.
+- Deterministic and LLM artifacts use independent directories and remain
+  simultaneously discoverable by the Dashboard.
+- Text-first and Protocol-first execution order alternates deterministically.
+- Summary output includes mean, population standard deviation, P50, P95,
+  minimum, and maximum for latency and Agent I/O token samples.
+- A real offline `standard` run generated six paired samples under
+  `continuous_tasks/deterministic`, plus manifest, report, and Dashboard.
+- Final P1 verification: Ruff passed, mypy reported no issues in 73 source
+  files, pytest reported 162 passed and 13 Rust-dependent skips, and the 27
+  dedicated AgentShell/compare/interactive tests passed.
+- This P1 run validates experimental infrastructure, not performance claims:
+  Protocol token and latency results are currently negative and remain the
+  explicit optimization target for P2.
 
 ## 2026-06-30 P0 Engineering Baseline
 

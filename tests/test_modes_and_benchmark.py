@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import orjson
+
 from agentmesh.cli import _benchmark_suite_path
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
@@ -31,6 +33,20 @@ class TextModeFailingSummarizerLLM(LLMClient):
                 "```"
             )
         return f"{agent_name} output"
+
+
+def test_benchmark_artifacts_are_isolated_by_track(tmp_path: Path) -> None:
+    paths = RuntimePaths(root=tmp_path)
+
+    deterministic = paths.benchmark_suite_summary("suite", track="deterministic")
+    llm = paths.benchmark_suite_summary("suite", track="llm")
+
+    assert deterministic != llm
+    assert deterministic.as_posix().endswith(
+        "benchmarks/suite/deterministic/benchmark_summary.csv"
+    )
+    assert llm.as_posix().endswith("benchmarks/suite/llm/benchmark_summary.csv")
+    assert paths.benchmark_suite_manifest("suite", track="llm").name == "manifest.json"
 
 
 def test_protocol_mode_runs_ten_continuous_tasks_without_cross_trace_state(
@@ -222,6 +238,63 @@ def test_protocol_mode_can_use_shared_memory_state_payloads(tmp_path: Path) -> N
     assert result.metrics.state_shm_transfer_bytes > 0
 
 
+def test_benchmark_records_reproducible_provenance_and_statistics(
+    tmp_path: Path,
+) -> None:
+    for name in ["task-a.txt", "task-b.txt"]:
+        (tmp_path / name).write_text(
+            f"Analyze reproducible protocol benchmark for {name}.",
+            encoding="utf-8",
+        )
+    suite = tmp_path / "paired.yaml"
+    suite.write_text(
+        """
+name: paired_suite
+repeat: 2
+seed: 17
+tasks:
+  - id: A
+    input_file: task-a.txt
+  - id: B
+    input_file: task-b.txt
+""".strip(),
+        encoding="utf-8",
+    )
+    paths = RuntimePaths(root=tmp_path)
+
+    summary = run_benchmark(suite_path=suite, paths=paths, use_llm=False)
+
+    assert summary.schema_version == "2.0"
+    assert summary.track == "deterministic"
+    assert summary.repeat_count == 2
+    assert summary.total_runs == 4
+    assert summary.text_latency_stats.count == 4
+    assert summary.protocol_latency_stats.count == 4
+
+    manifest = orjson.loads(
+        paths.benchmark_suite_manifest(
+            "paired_suite",
+            track="deterministic",
+        ).read_bytes()
+    )
+    assert manifest["experiment_id"] == summary.experiment_id
+    assert manifest["seed"] == 17
+
+    detail = read_jsonl(
+        paths.benchmark_suite_detail(
+            "paired_suite",
+            track="deterministic",
+        )
+    )
+    assert len(detail) == 8
+    assert {row["repeat_index"] for row in detail} == {1, 2}
+    assert {tuple(row["pair_order"]) for row in detail} == {
+        ("text", "protocol"),
+        ("protocol", "text"),
+    }
+    assert all(row["task_sha256"] for row in detail)
+
+
 def test_benchmark_and_report_generate_expected_outputs(tmp_path: Path) -> None:
     tasks_dir = tmp_path / "examples" / "tasks"
     tasks_dir.mkdir(parents=True)
@@ -253,7 +326,11 @@ tasks:
     paths = RuntimePaths(root=tmp_path)
 
     summary = run_benchmark(suite_path=suite, paths=paths, use_llm=False)
-    report_path = generate_report(paths=paths, suite_name=summary.suite_name)
+    report_path = generate_report(
+        paths=paths,
+        suite_name=summary.suite_name,
+        track=summary.track.value,
+    )
 
     assert summary.total_runs == 10
     assert summary.token_estimator == "mixed_cjk"
@@ -276,8 +353,8 @@ tasks:
     assert summary.wire_bytes_reduction_rate != 0
     assert 0.0 <= summary.memory_hit_rate <= 1.0
     assert summary.memory_reused_unit_count >= 0
-    assert paths.benchmark_suite_summary("tiny_suite").exists()
-    assert paths.benchmark_suite_detail("tiny_suite").exists()
+    assert paths.benchmark_suite_summary("tiny_suite", track="deterministic").exists()
+    assert paths.benchmark_suite_detail("tiny_suite", track="deterministic").exists()
     assert report_path.exists()
     report_text = report_path.read_text(encoding="utf-8")
     assert "TokenEstimator" in report_text
@@ -290,6 +367,10 @@ tasks:
     assert "MemoryEvidenceCount" in report_text
     assert "MemoryEvidenceBytes" in report_text
     assert "MemoryAvgEvidenceBytesPerQuery" in report_text
+    assert "SchemaVersion: 2.0" in report_text
+    assert "Track: deterministic" in report_text
+    assert "ExperimentId: exp-" in report_text
+    assert "Latency P50/P95" in report_text
     assert "MemoryAvgScore" in report_text
     assert "MemoryAvgSemanticSimilarity" in report_text
     assert "MemoryAvgTagOverlapScore" in report_text
@@ -299,7 +380,14 @@ tasks:
     assert "LatestDynamicRoute" in report_text
     assert "Text Agent I/O Sample" in report_text
     assert "Protocol Agent I/O Sample" in report_text
-    assert len(read_jsonl(paths.benchmark_suite_detail("tiny_suite"))) == 20
+    assert (
+        len(
+            read_jsonl(
+                paths.benchmark_suite_detail("tiny_suite", track="deterministic")
+            )
+        )
+        == 20
+    )
 
 
 def test_cli_benchmark_suite_aliases_resolve_to_builtin_suites(tmp_path: Path) -> None:
@@ -356,16 +444,24 @@ tasks:
 
     paths = RuntimePaths(root=tmp_path)
     summary_a = run_benchmark(suite_path=suite_a, paths=paths, use_llm=False)
-    report_a = generate_report(paths=paths, suite_name=summary_a.suite_name)
+    report_a = generate_report(
+        paths=paths,
+        suite_name=summary_a.suite_name,
+        track=summary_a.track.value,
+    )
     summary_b = run_benchmark(suite_path=suite_b, paths=paths, use_llm=False)
-    report_b = generate_report(paths=paths, suite_name=summary_b.suite_name)
+    report_b = generate_report(
+        paths=paths,
+        suite_name=summary_b.suite_name,
+        track=summary_b.track.value,
+    )
 
     assert report_a.exists()
     assert report_b.exists()
-    assert paths.benchmark_suite_summary("suite_a").exists()
-    assert paths.benchmark_suite_summary("suite_b").exists()
-    assert paths.benchmark_suite_detail("suite_a").exists()
-    assert paths.benchmark_suite_detail("suite_b").exists()
+    assert paths.benchmark_suite_summary("suite_a", track="deterministic").exists()
+    assert paths.benchmark_suite_summary("suite_b", track="deterministic").exists()
+    assert paths.benchmark_suite_detail("suite_a", track="deterministic").exists()
+    assert paths.benchmark_suite_detail("suite_b", track="deterministic").exists()
 
 
 def test_benchmark_rerun_overwrites_same_suite_artifacts(
@@ -412,7 +508,17 @@ tasks:
     run_benchmark(suite_path=suite, paths=paths, use_llm=False)
     run_benchmark(suite_path=suite, paths=paths, use_llm=False)
 
-    assert len(read_jsonl(paths.benchmark_suite_detail("repeated_suite"))) == 2
+    assert (
+        len(
+            read_jsonl(
+                paths.benchmark_suite_detail(
+                    "repeated_suite",
+                    track="deterministic",
+                )
+            )
+        )
+        == 2
+    )
 
 
 def test_benchmark_uses_configured_llm_for_both_modes_by_default(
@@ -583,8 +689,8 @@ tasks:
     assert [(event.current_stage, event.current_task, event.mode) for event in mode_events] == [
         (1, 1, "text"),
         (2, 1, "protocol"),
-        (3, 2, "text"),
-        (4, 2, "protocol"),
+        (3, 2, "protocol"),
+        (4, 2, "text"),
     ]
     assert all(event.task_id == "T1" for event in mode_events)
     assert mode_events[0].latency_ms == 11
@@ -663,7 +769,12 @@ tasks:
     assert mode_event.cold_start is True
     assert mode_event.depends_on == ["B1"]
     assert mode_event.tags == ["phase-c", "cold"]
-    detail_rows = read_jsonl(paths.benchmark_suite_detail("cold_start_suite"))
+    detail_rows = read_jsonl(
+        paths.benchmark_suite_detail(
+            "cold_start_suite",
+            track="deterministic",
+        )
+    )
     assert detail_rows[0]["cold_start"] is True
     assert detail_rows[0]["depends_on"] == ["B1"]
     assert detail_rows[0]["tags"] == ["phase-c", "cold"]

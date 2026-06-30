@@ -15,12 +15,46 @@ Tracked metrics:
 
 Generated artifacts:
 
-- `runs/latest/benchmarks/<suite_name>/benchmark_summary.csv`
-- `runs/latest/benchmarks/<suite_name>/benchmark_detail.jsonl`
-- `runs/latest/benchmarks/<suite_name>/experiment_report.md`
+- `runs/latest/benchmarks/<suite_name>/<track>/manifest.json`
+- `runs/latest/benchmarks/<suite_name>/<track>/benchmark_summary.csv`
+- `runs/latest/benchmarks/<suite_name>/<track>/benchmark_detail.jsonl`
+- `runs/latest/benchmarks/<suite_name>/<track>/experiment_report.md`
 
-Each benchmark suite owns its artifact directory. Running `standard`, `long`, and `showcase`
-updates only that suite's directory instead of overwriting the other benchmark reports.
+Each benchmark suite and execution track owns its artifact directory. The
+`deterministic` and `llm` tracks never overwrite each other. Legacy artifacts
+stored directly under `<suite_name>/` remain readable and are labeled
+`legacy` by the dashboard.
+
+## Reproducibility Schema
+
+Schema version `2.0` adds an immutable experiment manifest and structured
+provenance to every detail row:
+
+- `experiment_id`: stable ID derived from schema, suite content hash, track,
+  repeat count, and seed.
+- `suite_sha256` and `task_sha256`: exact configuration and task input hashes.
+- `track`: `deterministic` or `llm`.
+- `repeat_index` and `pair_index`: sample position within the experiment.
+- `pair_order`: actual Text/Protocol execution order.
+- Python/platform/model/Rust summaries without API keys or secrets.
+
+The runner alternates Text-first and Protocol-first pairs using the suite
+`seed`. This reduces systematic warm-cache and service-order bias while keeping
+the sequence deterministic.
+
+Summaries retain aggregate contest metrics and add sample distributions for
+Text/Protocol latency and Agent I/O tokens:
+
+- sample count
+- mean
+- population standard deviation
+- P50
+- P95
+- minimum and maximum
+
+Deterministic and LLM tracks must be analyzed separately. Results from
+different schema versions, tracks, suite hashes, or environments are not
+interchangeable.
 
 Report format:
 

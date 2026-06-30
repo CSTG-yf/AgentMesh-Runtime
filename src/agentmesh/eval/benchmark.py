@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import os
 import shutil
 import sqlite3
@@ -6,11 +7,22 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import orjson
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from agentmesh.config import AgentMeshConfig
+from agentmesh.core import rust_available
 from agentmesh.errors import BenchmarkConfigError
-from agentmesh.eval.metrics import TOKEN_ESTIMATOR, RunMetrics
+from agentmesh.eval.experiment import (
+    BENCHMARK_SCHEMA_VERSION,
+    BenchmarkTrack,
+    ExperimentManifest,
+    build_experiment_manifest,
+    paired_mode_order,
+)
+from agentmesh.eval.metrics import TOKEN_ESTIMATOR, ModeRunResult, RunMetrics
+from agentmesh.eval.statistics import DistributionStats, distribution_stats
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.storage.jsonl import append_jsonl
@@ -18,6 +30,11 @@ from agentmesh.storage.paths import RuntimePaths
 
 
 class BenchmarkSummary(BaseModel):
+    schema_version: str = BENCHMARK_SCHEMA_VERSION
+    experiment_id: str
+    track: BenchmarkTrack
+    repeat_count: int
+    seed: int
     suite_name: str
     total_runs: int
     token_estimator: str
@@ -63,6 +80,29 @@ class BenchmarkSummary(BaseModel):
     planner_refine_count: int
     retriever_refine_count: int
     tool_feedback_count: int
+    text_latency_stats: DistributionStats
+    protocol_latency_stats: DistributionStats
+    text_token_stats: DistributionStats
+    protocol_token_stats: DistributionStats
+
+
+class BenchmarkDetailRecord(BaseModel):
+    schema_version: str = BENCHMARK_SCHEMA_VERSION
+    experiment_id: str
+    track: BenchmarkTrack
+    repeat_index: int
+    pair_index: int
+    pair_order: tuple[str, str]
+    task_id: str
+    task_sha256: str
+    group: str = ""
+    topic: str = ""
+    tags: list[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
+    cold_start: bool = False
+    mode: str
+    trace_id: str
+    metrics: RunMetrics
 
 
 class BenchmarkProgressEvent(BaseModel):
@@ -106,10 +146,26 @@ def run_benchmark(
     if not isinstance(tasks, list) or not tasks:
         raise BenchmarkConfigError("Benchmark suite requires tasks")
     suite_name = str(suite.get("name", suite_path.stem))
-    detail_path = paths.benchmark_suite_detail(suite_name)
-    summary_path = paths.benchmark_suite_summary(suite_name)
-    report_path = paths.benchmark_suite_report(suite_name)
-    _reset_suite_artifacts(summary_path, detail_path, report_path)
+    track = BenchmarkTrack.LLM if use_llm else BenchmarkTrack.DETERMINISTIC
+    seed = int(suite.get("seed", 0))
+    runtime_config = AgentMeshConfig.from_project_root(paths.root)
+    manifest = build_experiment_manifest(
+        suite_path=suite_path,
+        suite_name=suite_name,
+        track=track,
+        repeat_count=repeat,
+        seed=seed,
+        environment={
+            "model": runtime_config.llm.model or "",
+            "rust_core": str(rust_available()),
+        },
+    )
+    detail_path = paths.benchmark_suite_detail(suite_name, track=track.value)
+    summary_path = paths.benchmark_suite_summary(suite_name, track=track.value)
+    report_path = paths.benchmark_suite_report(suite_name, track=track.value)
+    manifest_path = paths.benchmark_suite_manifest(suite_name, track=track.value)
+    _reset_suite_artifacts(summary_path, detail_path, report_path, manifest_path)
+    _write_manifest(manifest_path, manifest)
     total_tasks = repeat * len(tasks)
     total_stages = total_tasks * 2
     _emit_progress(
@@ -163,6 +219,10 @@ def run_benchmark(
     retriever_refine_count = 0
     tool_feedback_count = 0
     logical_runs = 0
+    text_latency_samples: list[int] = []
+    protocol_latency_samples: list[int] = []
+    text_token_samples: list[int] = []
+    protocol_token_samples: list[int] = []
 
     for _round in range(repeat):
         for task_index, task in enumerate(tasks, start=1):
@@ -190,49 +250,48 @@ def run_benchmark(
                     ),
                 )
             input_file = paths.root / str(task["input_file"])
-            text_result = run_text_mode(
-                task_path=input_file,
-                paths=paths,
-                load_configured_llm=use_llm,
-            )
-            _emit_progress(
-                progress_callback,
-                _progress_event(
-                    suite_name=suite_name,
-                    total_tasks=total_tasks,
-                    total_stages=total_stages,
-                    current_task=current_task,
-                    current_stage=(current_task - 1) * 2 + 1,
-                    repeat_index=_round + 1,
-                    repeat_total=repeat,
-                    task=task,
-                    result=text_result,
-                    use_llm=use_llm,
-                ),
-            )
-            protocol_result = run_protocol_mode(
-                task_path=input_file,
-                paths=paths,
-                load_configured_llm=use_llm,
-            )
-            _emit_progress(
-                progress_callback,
-                _progress_event(
-                    suite_name=suite_name,
-                    total_tasks=total_tasks,
-                    total_stages=total_stages,
-                    current_task=current_task,
-                    current_stage=current_task * 2,
-                    repeat_index=_round + 1,
-                    repeat_total=repeat,
-                    task=task,
-                    result=protocol_result,
-                    use_llm=use_llm,
-                ),
-            )
+            pair_index = _round * len(tasks) + task_index - 1
+            pair_order = paired_mode_order(seed=seed, pair_index=pair_index)
+            results: dict[str, ModeRunResult] = {}
+            for stage_offset, mode in enumerate(pair_order, start=1):
+                result = (
+                    run_text_mode(
+                        task_path=input_file,
+                        paths=paths,
+                        load_configured_llm=use_llm,
+                    )
+                    if mode == "text"
+                    else run_protocol_mode(
+                        task_path=input_file,
+                        paths=paths,
+                        load_configured_llm=use_llm,
+                    )
+                )
+                results[mode] = result
+                _emit_progress(
+                    progress_callback,
+                    _progress_event(
+                        suite_name=suite_name,
+                        total_tasks=total_tasks,
+                        total_stages=total_stages,
+                        current_task=current_task,
+                        current_stage=(current_task - 1) * 2 + stage_offset,
+                        repeat_index=_round + 1,
+                        repeat_total=repeat,
+                        task=task,
+                        result=result,
+                        use_llm=use_llm,
+                    ),
+                )
+            text_result = results["text"]
+            protocol_result = results["protocol"]
             logical_runs += 1
-            text_tokens += _token_metric(text_result.metrics)
-            protocol_tokens += _token_metric(protocol_result.metrics)
+            text_token_sample = _token_metric(text_result.metrics)
+            protocol_token_sample = _token_metric(protocol_result.metrics)
+            text_tokens += text_token_sample
+            protocol_tokens += protocol_token_sample
+            text_token_samples.append(text_token_sample)
+            protocol_token_samples.append(protocol_token_sample)
             text_msg_count += text_result.metrics.message_count
             protocol_msg_count += protocol_result.metrics.message_count
             text_wire_bytes += text_result.metrics.wire_bytes
@@ -252,6 +311,8 @@ def run_benchmark(
             protocol_state_payload_bytes += protocol_result.metrics.state_transfer_bytes
             text_latency += text_result.metrics.latency_ms
             protocol_latency += protocol_result.metrics.latency_ms
+            text_latency_samples.append(text_result.metrics.latency_ms)
+            protocol_latency_samples.append(protocol_result.metrics.latency_ms)
             memory_queries += protocol_result.metrics.memory_query_count
             memory_query_hits += protocol_result.metrics.memory_query_hit_count or min(
                 protocol_result.metrics.memory_hit_count,
@@ -292,23 +353,35 @@ def run_benchmark(
             planner_refine_count += protocol_result.metrics.planner_refine_count
             retriever_refine_count += protocol_result.metrics.retriever_refine_count
             tool_feedback_count += protocol_result.metrics.tool_feedback_count
+            task_sha256 = hashlib.sha256(input_file.read_bytes()).hexdigest()
             for result in [text_result, protocol_result]:
+                detail_record = BenchmarkDetailRecord(
+                    experiment_id=manifest.experiment_id,
+                    track=track,
+                    repeat_index=_round + 1,
+                    pair_index=pair_index,
+                    pair_order=pair_order,
+                    task_id=str(task["id"]),
+                    task_sha256=task_sha256,
+                    group=str(task.get("group", "")),
+                    topic=str(task.get("topic", "")),
+                    tags=_list_of_str(task.get("tags")),
+                    depends_on=_list_of_str(task.get("depends_on")),
+                    cold_start=bool(task.get("cold_start", False)),
+                    mode=result.mode,
+                    trace_id=result.trace_id,
+                    metrics=result.metrics,
+                )
                 append_jsonl(
                     detail_path,
-                    {
-                        "task_id": task["id"],
-                        "group": task.get("group", ""),
-                        "topic": task.get("topic", ""),
-                        "tags": task.get("tags", []),
-                        "depends_on": task.get("depends_on", []),
-                        "cold_start": bool(task.get("cold_start", False)),
-                        "mode": result.mode,
-                        "trace_id": result.trace_id,
-                        "metrics": result.metrics.model_dump(),
-                    },
+                    detail_record.model_dump(mode="json"),
                 )
 
     summary = BenchmarkSummary(
+        experiment_id=manifest.experiment_id,
+        track=track,
+        repeat_count=repeat,
+        seed=seed,
         suite_name=suite_name,
         total_runs=logical_runs,
         token_estimator=TOKEN_ESTIMATOR,
@@ -384,6 +457,10 @@ def run_benchmark(
         planner_refine_count=planner_refine_count,
         retriever_refine_count=retriever_refine_count,
         tool_feedback_count=tool_feedback_count,
+        text_latency_stats=distribution_stats(text_latency_samples),
+        protocol_latency_stats=distribution_stats(protocol_latency_samples),
+        text_token_stats=distribution_stats(text_token_samples),
+        protocol_token_stats=distribution_stats(protocol_token_samples),
     )
     _write_summary(summary_path, summary)
     _emit_progress(
@@ -545,7 +622,27 @@ def _byte_metric(metrics: RunMetrics) -> int:
 
 def _write_summary(path: Path, summary: BenchmarkSummary) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        key: _csv_value(value)
+        for key, value in summary.model_dump(mode="json").items()
+    }
     with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=list(summary.model_dump().keys()))
+        writer = csv.DictWriter(file, fieldnames=list(row))
         writer.writeheader()
-        writer.writerow(summary.model_dump())
+        writer.writerow(row)
+
+
+def _csv_value(value: object) -> object:
+    if isinstance(value, (dict, list)):
+        return orjson.dumps(value).decode("utf-8")
+    return value
+
+
+def _write_manifest(path: Path, manifest: ExperimentManifest) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        orjson.dumps(
+            manifest.model_dump(mode="json"),
+            option=orjson.OPT_INDENT_2,
+        )
+    )

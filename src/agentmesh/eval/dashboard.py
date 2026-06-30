@@ -17,15 +17,19 @@ REPORT_FILE = "experiment_report.md"
 
 def load_dashboard_data(root: Path) -> dict[str, object]:
     configured = _configured_suites(root)
-    generated = _generated_suite_dirs(root)
-    names = sorted(configured.keys() | generated.keys())
+    generated = _generated_suite_sources(root)
+    identities = set(generated)
+    for name in configured:
+        if not any(generated_name == name for generated_name, _track in generated):
+            identities.add((name, None))
+    ordered_identities = sorted(identities, key=lambda item: (item[0], item[1] or ""))
     suites: list[dict[str, object]] = []
     available_sources = 0
-    expected_sources = len(names) * 3
+    expected_sources = len(ordered_identities) * 3
 
-    for name in names:
+    for name, track in ordered_identities:
         config = configured.get(name, {})
-        suite_dir = generated.get(name)
+        suite_dir = generated.get((name, track))
         diagnostics: list[dict[str, str]] = []
         summary: dict[str, object] = {}
         details: list[dict[str, object]] = []
@@ -63,6 +67,7 @@ def load_dashboard_data(root: Path) -> dict[str, object]:
         suites.append(
             {
                 "name": name,
+                "track": track or "not_generated",
                 "status": status,
                 "configured_task_count": _task_count(config),
                 "configured_tasks": config.get("tasks", []),
@@ -119,15 +124,24 @@ def _configured_suites(root: Path) -> dict[str, dict[str, object]]:
     return suites
 
 
-def _generated_suite_dirs(root: Path) -> dict[str, Path]:
+def _generated_suite_sources(root: Path) -> dict[tuple[str, str | None], Path]:
     benchmark_dir = root / "runs" / "latest" / "benchmarks"
     if not benchmark_dir.exists():
         return {}
-    return {
-        path.name: path
-        for path in benchmark_dir.iterdir()
-        if path.is_dir() and not path.name.startswith(".")
-    }
+    generated: dict[tuple[str, str | None], Path] = {}
+    artifact_names = {SUMMARY_FILE, DETAIL_FILE, REPORT_FILE}
+    for suite_dir in benchmark_dir.iterdir():
+        if not suite_dir.is_dir() or suite_dir.name.startswith("."):
+            continue
+        if any((suite_dir / name).exists() for name in artifact_names):
+            generated[(suite_dir.name, "legacy")] = suite_dir
+        for track in ["deterministic", "llm"]:
+            track_dir = suite_dir / track
+            if track_dir.is_dir() and any(
+                (track_dir / name).exists() for name in artifact_names
+            ):
+                generated[(suite_dir.name, track)] = track_dir
+    return generated
 
 
 def _read_summary(
@@ -201,6 +215,11 @@ def _parse_scalar(value: str | None) -> object:
     if value is None or not value.strip():
         return None
     normalized = value.strip()
+    if normalized.startswith(("{", "[")):
+        try:
+            return json.loads(normalized)
+        except json.JSONDecodeError:
+            pass
     try:
         number = float(normalized)
     except ValueError:
@@ -327,7 +346,7 @@ function render(){
   <div class="legend"><span><i class="dot green"></i>Completed</span><span><i class="dot blue"></i>Selected</span><span><i class="dot amber"></i>Partial data</span><span><i class="dot"></i>Not generated</span></div></aside>
   <div class="content">
    <section class="kpis">${kpi("Token saving",metric(s,"token_saving_rate"),"lower",true)}${kpi("Wire reduction",metric(s,"fair_wire_reduction_rate")??metric(s,"wire_bytes_reduction_rate"),"lower",true)}${kpi("Latency reduction",metric(s,"latency_reduction_rate"),"lower",true)}${kpi("Quality preservation",metric(s,"quality_preservation_rate"),"higher",true)}${kpi("Memory hit rate",metric(s,"memory_hit_rate"),"higher",true)}</section>
-   <section class="section"><div class="section-head"><div><div class="section-title">Mode comparison summary</div><small>Aggregated over selected suite: ${esc(suite.name)}</small></div><div class="mode-key"><span><i class="key-box"></i>Text Mode</span><span><i class="key-box protocol"></i>Protocol Mode</span></div></div><div class="charts">${charts(suite)}</div></section>
+   <section class="section"><div class="section-head"><div><div class="section-title">Mode comparison summary</div><small>Selected: ${esc(suite.name)} · ${esc(suite.track||"legacy")}</small></div><div class="mode-key"><span><i class="key-box"></i>Text Mode</span><span><i class="key-box protocol"></i>Protocol Mode</span></div></div><div class="charts">${charts(suite)}</div></section>
    <section class="section"><div class="section-head"><div><div class="section-title">Task results</div><small id="task-count"></small></div><div class="toolbar"><input id="search" class="field search" placeholder="Search tasks…" aria-label="Search tasks"><select id="mode-filter" class="field"><option value="">All modes</option><option value="text">Text</option><option value="protocol">Protocol</option></select><button class="clear" id="clear">Clear filters</button></div></div><div class="table-wrap" id="table"></div></section>
    <section class="section"><div class="section-head"><div class="section-title">All metrics</div><small>${Object.keys(s).length} recorded fields</small></div><div class="metrics">${metrics(s)}</div></section>
    <section class="section"><details><summary>Evidence &amp; diagnostics</summary><div class="evidence"><pre>${esc(suite.report||"No report artifact available.")}</pre><div class="diagnostics">${diagnostics(suite)}</div></div></details></section>
@@ -336,7 +355,7 @@ function render(){
  renderTable();
 }
 function emptyPage(){return`<section class="section nosuites"><h2>No suites discovered</h2><p>No benchmark data is available yet. Run a benchmark and regenerate this report.</p><div class="kpi-value na">N/A</div><div class="kpi-note">Not recorded</div></section>`}
-function suiteButton(x,i){return`<button class="suite ${i===suiteIndex?"active":""}" data-suite="${i}"><span class="suite-name">${esc(x.name)}</span><span class="suite-status ${x.status}"><i class="dot"></i>${statusLabel(x.status)}</span><span class="suite-meta">${x.details.length||x.configured_task_count||0} result rows · ${x.source_count}/3 sources</span></button>`}
+function suiteButton(x,i){return`<button class="suite ${i===suiteIndex?"active":""}" data-suite="${i}"><span class="suite-name">${esc(x.name)} · ${esc(x.track||"legacy")}</span><span class="suite-status ${x.status}"><i class="dot"></i>${statusLabel(x.status)}</span><span class="suite-meta">${x.details.length||x.configured_task_count||0} result rows · ${x.source_count}/3 sources</span></button>`}
 function kpi(name,value,direction,isPct){return`<div class="kpi"><div class="kpi-label">${name}</div><div class="kpi-value ${value===null?"na":""}">${value===null?"N/A":isPct?pct(value):number(value)}</div><div class="kpi-note">${value===null?"Not recorded":direction==="higher"?"Higher is better":"Lower is better"}</div></div>`}
 function charts(suite){const s=suite.summary||{},defs=[
  ["Tokens",s.text_agent_io_tokens,s.protocol_agent_io_tokens,number],

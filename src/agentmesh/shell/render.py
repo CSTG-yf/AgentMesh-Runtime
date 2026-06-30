@@ -273,11 +273,30 @@ def _render_latency_breakdown(console: Console, summary: CompareSummary) -> None
 
 def render_benchmark(console: Console, summary: BenchmarkSummary) -> None:
     table = Table(
-        title=f"Benchmark: {summary.suite_name} ({summary.total_runs} runs)", show_lines=True
+        title=(
+            f"Benchmark: {summary.suite_name} [{summary.track.value}] "
+            f"({summary.total_runs} runs)"
+        ),
+        show_lines=True,
     )
     table.add_column("Metric / 指标说明", ratio=2)
     table.add_column("Text", ratio=1)
     table.add_column("Protocol", ratio=1)
+
+    _add_section(table, "实验溯源")
+    _add_metric(table, "schema version", summary.schema_version, "")
+    _add_metric(table, "experiment id", summary.experiment_id, "")
+    _add_metric(table, "track", summary.track.value, "")
+    _add_metric(table, "repeat / seed", f"{summary.repeat_count} / {summary.seed}", "")
+    _add_metric(
+        table,
+        "latency P50 / P95 ms",
+        f"{summary.text_latency_stats.p50:.2f} / {summary.text_latency_stats.p95:.2f}",
+        (
+            f"{summary.protocol_latency_stats.p50:.2f} / "
+            f"{summary.protocol_latency_stats.p95:.2f}"
+        ),
+    )
 
     _add_section(table, "通信效率（评分权重 25%）")
     _add_metric(
@@ -429,15 +448,16 @@ def render_benchmark_artifacts(
     paths: RuntimePaths,
     *,
     suite_name: str,
+    track: str | None = None,
     report_path: Path | None = None,
 ) -> None:
     console.print("[bold]Benchmark output files[/bold]")
     console.print(
-        f"summary csv: {paths.benchmark_suite_summary(suite_name).resolve()}",
+        f"summary csv: {paths.benchmark_suite_summary(suite_name, track=track).resolve()}",
         soft_wrap=True,
     )
     console.print(
-        f"detail jsonl: {paths.benchmark_suite_detail(suite_name).resolve()}",
+        f"detail jsonl: {paths.benchmark_suite_detail(suite_name, track=track).resolve()}",
         soft_wrap=True,
     )
     if report_path is not None:

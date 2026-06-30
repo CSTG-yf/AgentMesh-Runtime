@@ -1,18 +1,25 @@
 import csv
 from pathlib import Path
 
+import orjson
+
 from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
 
-def generate_report(paths: RuntimePaths, *, suite_name: str | None = None) -> Path:
+def generate_report(
+    paths: RuntimePaths,
+    *,
+    suite_name: str | None = None,
+    track: str | None = None,
+) -> Path:
     summary_path = (
-        paths.benchmark_suite_summary(suite_name)
+        paths.benchmark_suite_summary(suite_name, track=track)
         if suite_name is not None
         else paths.benchmark_summary
     )
     report_path = (
-        paths.benchmark_suite_report(suite_name)
+        paths.benchmark_suite_report(suite_name, track=track)
         if suite_name is not None
         else paths.experiment_report
     )
@@ -24,6 +31,8 @@ def generate_report(paths: RuntimePaths, *, suite_name: str | None = None) -> Pa
     memory = read_jsonl(paths.protocol_memory)[:5]
     trace = read_jsonl(paths.protocol_trace)
     latest_metrics = _latest_metrics(trace)
+    text_latency_stats = _summary_json_dict(summary, "text_latency_stats")
+    protocol_latency_stats = _summary_json_dict(summary, "protocol_latency_stats")
     lines = [
         "# AgentMesh Runtime Experiment Report",
         "",
@@ -31,6 +40,15 @@ def generate_report(paths: RuntimePaths, *, suite_name: str | None = None) -> Pa
         "",
         "Comparison target: plain text agent handoff vs structured AMP + StateRef handoff.",
         "",
+        f"- SchemaVersion: {summary.get('schema_version', 'legacy')}",
+        f"- Track: {summary.get('track', track or 'legacy')}",
+        f"- ExperimentId: {summary.get('experiment_id', 'not-recorded')}",
+        f"- RepeatCount: {summary.get('repeat_count', '0')}",
+        f"- Seed: {summary.get('seed', '0')}",
+        "- Latency P50/P95: "
+        f"text={text_latency_stats.get('p50', 0)}/{text_latency_stats.get('p95', 0)} ms; "
+        "protocol="
+        f"{protocol_latency_stats.get('p50', 0)}/{protocol_latency_stats.get('p95', 0)} ms",
         f"- TokenEstimator: {summary.get('token_estimator', 'mixed_cjk')}",
         f"- TokenSavingRate: {summary.get('token_saving_rate', '0')}",
         f"- WireBytesReductionRate: {summary.get('wire_bytes_reduction_rate', '0')}",
@@ -116,6 +134,17 @@ def _read_summary(path: Path) -> dict[str, str]:
     with path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
     return rows[0] if rows else {}
+
+
+def _summary_json_dict(summary: dict[str, str], key: str) -> dict[str, object]:
+    raw = summary.get(key, "")
+    if not raw:
+        return {}
+    try:
+        value = orjson.loads(raw)
+    except orjson.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _latest_metrics(trace: list[dict[str, object]]) -> dict[str, object]:

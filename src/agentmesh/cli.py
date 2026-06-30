@@ -98,7 +98,11 @@ def benchmark(
             use_llm=llm,
             progress_callback=lambda event: render_benchmark_progress(console, event),
         )
-        report_path = generate_report(paths, suite_name=summary.suite_name)
+        report_path = generate_report(
+            paths,
+            suite_name=summary.suite_name,
+            track=summary.track.value,
+        )
     except Exception as exc:
         console.print(f"[red]agentmesh benchmark failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -107,6 +111,7 @@ def benchmark(
         console,
         paths,
         suite_name=summary.suite_name,
+        track=summary.track.value,
         report_path=report_path,
     )
 
