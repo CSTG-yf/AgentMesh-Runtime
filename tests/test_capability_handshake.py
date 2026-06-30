@@ -27,6 +27,10 @@ def test_agents_register_and_advertise_capabilities() -> None:
 
 
 def test_protocol_mode_writes_handshake_messages(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "AGENTMESH_PROTOCOL_SKIP_HANDSHAKE_FOR_INPROC=false\n",
+        encoding="utf-8",
+    )
     task = tmp_path / "task.txt"
     task.write_text("Analyze state passing and shared memory.", encoding="utf-8")
     paths = RuntimePaths(root=tmp_path)

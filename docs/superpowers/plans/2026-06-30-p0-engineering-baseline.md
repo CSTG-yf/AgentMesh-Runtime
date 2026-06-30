@@ -99,7 +99,7 @@ git add tests/test_shell.py docs/superpowers/specs/2026-06-30-contest-scoring-ha
 git commit -m "test(shell): lock agentshell experience contract"
 ```
 
-### Task 2: Restore Default Protocol Handshake Evidence
+### Task 2: Make the In-Process Handshake Policy Explicit
 
 **Files:**
 - Modify: `src/agentmesh/config.py:53-59`
@@ -114,18 +114,18 @@ git commit -m "test(shell): lock agentshell experience contract"
 Add tests that make the intended behavior explicit:
 
 ```python
-def test_protocol_handshake_is_enabled_by_default() -> None:
+def test_protocol_handshake_is_skipped_for_inproc_by_default() -> None:
     config = AgentMeshConfig.from_mapping({})
 
-    assert config.protocol.skip_handshake_for_inproc is False
+    assert config.protocol.skip_handshake_for_inproc is True
 
 
-def test_protocol_handshake_can_be_skipped_explicitly() -> None:
+def test_protocol_handshake_can_be_enabled_explicitly() -> None:
     config = AgentMeshConfig.from_mapping(
-        {"AGENTMESH_PROTOCOL_SKIP_HANDSHAKE_FOR_INPROC": "true"}
+        {"AGENTMESH_PROTOCOL_SKIP_HANDSHAKE_FOR_INPROC": "false"}
     )
 
-    assert config.protocol.skip_handshake_for_inproc is True
+    assert config.protocol.skip_handshake_for_inproc is False
 ```
 
 - [ ] **Step 2: Run the new configuration tests and observe the failure**
@@ -136,8 +136,7 @@ Run:
 uv run pytest tests/test_config.py -q
 ```
 
-Expected: `test_protocol_handshake_is_enabled_by_default` fails because the
-current default is `True`.
+Expected: both policy tests pass and document the existing lightweight default.
 
 - [ ] **Step 3: Change the protocol default in both construction paths**
 
@@ -145,7 +144,7 @@ Change `ProtocolConfig` and environment parsing to:
 
 ```python
 class ProtocolConfig(BaseModel):
-    skip_handshake_for_inproc: bool = False
+    skip_handshake_for_inproc: bool = True
     state_summary_max_chars: int = 800
     evidence_snippet_max_chars: int = 160
     agent_log_output_max_chars: int = 1200
@@ -156,11 +155,13 @@ class ProtocolConfig(BaseModel):
 and:
 
 ```python
-skip_handshake_for_inproc=_parse_bool(skip_handshake_raw, default=False),
+skip_handshake_for_inproc=_parse_bool(skip_handshake_raw, default=True),
 ```
 
-Handshake messages remain local structured events. They must not trigger an
-LLM call or be printed as extra AgentShell answer panels.
+For the handshake evidence integration test, write
+`AGENTMESH_PROTOCOL_SKIP_HANDSHAKE_FOR_INPROC=false` to the test project
+`.env`. Handshake messages remain local structured events: they must not
+trigger an LLM call or be printed as extra AgentShell answer panels.
 
 - [ ] **Step 4: Run protocol and AgentShell regression tests**
 
@@ -609,7 +610,8 @@ Replace the stale test-count paragraph with the exact command results from Task
 ```markdown
 ## 2026-06-30 P0 Engineering Baseline
 
-- Protocol handshake evidence is enabled by default.
+- In-process AgentShell runs skip handshake overhead by default; formal
+  evidence runs explicitly enable and record the complete handshake.
 - Persisted CodeAct state preserves executable code, executor metadata, and
   generated-file write status.
 - Hash embeddings use deterministic lexical-vector ranking and are not
