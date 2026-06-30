@@ -25,6 +25,25 @@
 | 20 | Generic algorithm/code routing: algorithm and self-check requests trigger Executor CodeAct without task-specific baked-in solutions | Completed | `tests/test_dynamic_agent_routing.py::test_protocol_mode_handles_algorithm_request_without_baked_in_solution` |
 | 21 | Shell `/ask` and bare-text input stream Protocol Mode agent outputs before the final answer | Completed | `tests/test_shell.py::test_shell_ask_streams_protocol_agent_outputs` |
 | 22 | Review hardening: agents dereference StateRefs, RetrieverAgent owns memory search, and route normalization uses capability advertisements | Completed | `tests/test_agent_state_refs.py`, `tests/test_dynamic_agent_routing.py::test_planner_decision_normalizes_route_from_capability_advertisements`, `tests/test_hybrid_memory.py` |
+| 23 | P0 engineering baseline: AgentShell regression contract, CodeAct state schema, memory ranking, static quality, and ten-round stability | Completed | `uv run ruff check .`, `uv run mypy src`, `uv run pytest` |
+
+## 2026-06-30 P0 Engineering Baseline
+
+- In-process AgentShell runs skip handshake overhead by default; formal evidence
+  runs explicitly enable and record HELLO, CAPABILITY_ADVERTISE, CAPABILITY_QUERY,
+  and PROTOCOL_MAP messages.
+- Persisted CodeAct state preserves executable code, executor metadata, and
+  generated-file write status.
+- Hash embeddings use deterministic lexical-vector ranking and are not
+  described as semantic embeddings.
+- AgentShell bare-text routing, streaming, code fidelity, command surface,
+  dashboard generation, and error recovery are covered by regression tests.
+- Ten continuous Protocol Mode tasks complete with distinct trace IDs.
+- Ruff passes, mypy reports no issues in 71 source files, and pytest reports
+  155 passed with 13 Rust-dependent tests skipped because the extension is not
+  installed in this isolated worktree.
+- A real `ShellSession` smoke sequence completed `/help`, `/config`, offline
+  `/compare`, bare-text Protocol Mode execution, `/dashboard`, and `/exit`.
 
 Latest verified command:
 
@@ -48,8 +67,8 @@ uv run agentmesh trace show
 Results:
 
 - `ruff`: all checks passed.
-- `mypy`: no issues in 57 source files.
-- `pytest`: 45 tests passed with Rust Core installed; Rust-only tests are skipped when `agentmesh_core` is not installed.
+- `mypy`: no issues in 71 source files.
+- `pytest`: 155 tests passed and 13 Rust-dependent tests skipped in the isolated P0 worktree.
 - Protocol demo: produced `sandbox exit 0`.
 - Real LLM Protocol demo: `trace-dcefca7cdce7`, final answer came from `SummarizerAgent` model output; LLM stages dominated latency (`planner` about `19.7s`, `retriever` about `30.2s`, `executor` about `22.1s`, `summarizer` about `23.6s`).
 - Benchmark: 30 logical runs, `TokenSavingRate` about `0.7055`, `WireBytesReductionRate` about `0.3300`, `TextWireBytes` `26418`, `ProtocolWireBytes` `17700`, `MemoryHitRate` about `0.9667`, `LatencyReductionRate` about `-524.29`.
