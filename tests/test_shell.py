@@ -4,6 +4,7 @@ from rich.console import Console
 
 from agentmesh.eval.benchmark import BenchmarkProgressEvent
 from agentmesh.eval.compare import CompareAgentOutput, CompareSummary
+from agentmesh.eval.experiment import BenchmarkTrack
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.search import MemorySearchResult
@@ -186,6 +187,7 @@ tasks:
     class FakeSummary:
         suite_name = "shell_progress_suite"
         total_runs = 1
+        track = BenchmarkTrack.DETERMINISTIC
 
     def fake_run_benchmark(suite_path, paths, *, use_llm=True, progress_callback=None):
         del suite_path, paths, use_llm

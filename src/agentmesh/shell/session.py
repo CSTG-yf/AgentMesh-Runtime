@@ -207,11 +207,16 @@ class ShellSession:
             progress_callback=lambda event: render_benchmark_progress(self.console, event),
         )
         render_benchmark(self.console, summary)
-        report_path = generate_report(self.paths, suite_name=summary.suite_name)
+        report_path = generate_report(
+            self.paths,
+            suite_name=summary.suite_name,
+            track=summary.track.value,
+        )
         render_benchmark_artifacts(
             self.console,
             self.paths,
             suite_name=summary.suite_name,
+            track=summary.track.value,
             report_path=report_path,
         )
 

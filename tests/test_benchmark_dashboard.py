@@ -49,6 +49,40 @@ def test_load_dashboard_data_keeps_configured_and_generated_suites(tmp_path: Pat
     assert generated["diagnostics"][0]["kind"] == "malformed_jsonl"
 
 
+def test_dashboard_keeps_deterministic_and_llm_tracks_separate(tmp_path: Path) -> None:
+    from agentmesh.eval.dashboard import load_dashboard_data
+
+    suite = _write_suite(tmp_path, "same_suite")
+    for track in ["deterministic", "llm"]:
+        track_dir = suite / track
+        track_dir.mkdir()
+        (track_dir / "benchmark_summary.csv").write_text(
+            "schema_version,suite_name,track,total_runs\n"
+            f"2.0,same_suite,{track},1\n",
+            encoding="utf-8",
+        )
+        (track_dir / "benchmark_detail.jsonl").write_text(
+            f'{{"schema_version":"2.0","track":"{track}","task_id":"T1"}}\n',
+            encoding="utf-8",
+        )
+        (track_dir / "experiment_report.md").write_text(
+            f"# {track} report\n",
+            encoding="utf-8",
+        )
+
+    data = load_dashboard_data(tmp_path)
+    identities = {
+        (str(item["name"]), str(item["track"]))
+        for item in data["suites"]
+        if item["status"] == "complete"
+    }
+
+    assert identities == {
+        ("same_suite", "deterministic"),
+        ("same_suite", "llm"),
+    }
+
+
 def test_generate_dashboard_is_self_contained_complete_and_safe(tmp_path: Path) -> None:
     from agentmesh.eval.dashboard import generate_dashboard
 

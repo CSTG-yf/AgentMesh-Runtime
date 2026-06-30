@@ -622,10 +622,20 @@ def _byte_metric(metrics: RunMetrics) -> int:
 
 def _write_summary(path: Path, summary: BenchmarkSummary) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        key: _csv_value(value)
+        for key, value in summary.model_dump(mode="json").items()
+    }
     with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=list(summary.model_dump().keys()))
+        writer = csv.DictWriter(file, fieldnames=list(row))
         writer.writeheader()
-        writer.writerow(summary.model_dump())
+        writer.writerow(row)
+
+
+def _csv_value(value: object) -> object:
+    if isinstance(value, (dict, list)):
+        return orjson.dumps(value).decode("utf-8")
+    return value
 
 
 def _write_manifest(path: Path, manifest: ExperimentManifest) -> None:

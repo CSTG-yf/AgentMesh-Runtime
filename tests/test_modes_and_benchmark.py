@@ -367,6 +367,10 @@ tasks:
     assert "MemoryEvidenceCount" in report_text
     assert "MemoryEvidenceBytes" in report_text
     assert "MemoryAvgEvidenceBytesPerQuery" in report_text
+    assert "SchemaVersion: 2.0" in report_text
+    assert "Track: deterministic" in report_text
+    assert "ExperimentId: exp-" in report_text
+    assert "Latency P50/P95" in report_text
     assert "MemoryAvgScore" in report_text
     assert "MemoryAvgSemanticSimilarity" in report_text
     assert "MemoryAvgTagOverlapScore" in report_text
