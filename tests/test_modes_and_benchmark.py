@@ -33,6 +33,35 @@ class TextModeFailingSummarizerLLM(LLMClient):
         return f"{agent_name} output"
 
 
+def test_protocol_mode_runs_ten_continuous_tasks_without_cross_trace_state(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    trace_ids: set[str] = set()
+
+    for index in range(10):
+        task = tmp_path / f"task-{index}.txt"
+        task.write_text(
+            f"Analyze protocol state transfer round {index}.",
+            encoding="utf-8",
+        )
+        result = run_protocol_mode(
+            task_path=task,
+            paths=paths,
+            load_configured_llm=False,
+        )
+        assert result.answer
+        assert result.trace_id not in trace_ids
+        trace_ids.add(result.trace_id)
+
+    assert len(trace_ids) == 10
+    message_trace_ids = {
+        str(item["trace_id"])
+        for item in read_jsonl(paths.protocol_messages)
+    }
+    assert trace_ids <= message_trace_ids
+
+
 def test_text_and_protocol_modes_produce_metrics_and_artifacts(tmp_path: Path) -> None:
     task = tmp_path / "task.txt"
     task.write_text("Create a concise architecture note about AgentMesh Runtime.", encoding="utf-8")

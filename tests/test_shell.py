@@ -626,6 +626,35 @@ def test_shell_ask_prints_protocol_answer_without_rich_markup_stripping(
     assert "[0]" in rendered
 
 
+def test_shell_continues_after_protocol_error(tmp_path, monkeypatch) -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=140)
+    session = ShellSession(paths=RuntimePaths(root=tmp_path), console=console)
+    calls = 0
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        nonlocal calls
+        del task_path, paths, load_configured_llm
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("injected protocol failure")
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-shell-recovered",
+            answer="second answer",
+            metrics=RunMetrics(message_count=3),
+        )
+
+    monkeypatch.setattr("agentmesh.shell.session.run_protocol_mode", fake_protocol_mode)
+
+    assert session.handle_line("first request")
+    assert session.handle_line("second request")
+
+    rendered = output.getvalue()
+    assert "command failed:" in rendered
+    assert "second answer" in rendered
+
+
 def test_shell_exit_returns_false(tmp_path) -> None:
     output = StringIO()
     console = Console(file=output, force_terminal=False)
