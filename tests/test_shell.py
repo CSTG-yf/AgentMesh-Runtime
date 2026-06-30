@@ -31,6 +31,34 @@ def test_shell_parser_handles_slash_command_arguments() -> None:
     assert command.args == ["--llm", "中文 Agent 任务"]
 
 
+def test_agentshell_core_command_surface_remains_available(tmp_path) -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=140)
+    session = ShellSession(paths=RuntimePaths(root=tmp_path), console=console)
+
+    assert session.handle_line("/help")
+    assert session.handle_line("/config")
+    assert session.handle_line("/dashboard")
+    assert session.handle_line("/unknown")
+    assert session.handle_line("/exit") is False
+
+    rendered = output.getvalue()
+    for command in [
+        "/ask",
+        "/compare",
+        "/run",
+        "/benchmark",
+        "/memory",
+        "/trace",
+        "/report",
+        "/dashboard",
+        "/config",
+        "/exit",
+    ]:
+        assert command in rendered
+    assert "Unknown command" in rendered
+
+
 def test_shell_help_and_config_do_not_fail(tmp_path) -> None:
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=120)
@@ -574,12 +602,7 @@ def test_shell_ask_prints_protocol_answer_without_rich_markup_stripping(
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=140)
     session = ShellSession(paths=RuntimePaths(root=tmp_path), console=console)
-    answer = (
-        "```python\n"
-        "pivot = arr[len(arr) // 2]\n"
-        "left = [x for x in arr if x < pivot]\n"
-        "```\n"
-    )
+    answer = "```python\nprint(items[0])\nresult = {'ok': True}\n```\n"
 
     def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
         del task_path, paths, load_configured_llm
@@ -592,11 +615,15 @@ def test_shell_ask_prints_protocol_answer_without_rich_markup_stripping(
 
     monkeypatch.setattr("agentmesh.shell.session.run_protocol_mode", fake_protocol_mode)
 
-    assert session.handle_line("/ask write python code")
+    command = parse_shell_line("print(items[0])")
+    assert command is not None
+    assert command.name == "ask"
+    assert session.handle_line("print(items[0])")
 
     rendered = output.getvalue()
-    assert "pivot = arr[len(arr) // 2]" in rendered
-    assert "left = [x for x in arr if x < pivot]" in rendered
+    assert "print(items[0])" in rendered
+    assert "result = {'ok': True}" in rendered
+    assert "[0]" in rendered
 
 
 def test_shell_exit_returns_false(tmp_path) -> None:
