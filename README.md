@@ -295,6 +295,16 @@ uv run agentmesh benchmark --suite showcase
 
 Benchmark 运行期间会隔离项目级 global memory，只使用当前 benchmark run 内产生的记忆，避免历史长期记忆污染 standard/long/showcase 指标；`cold_start: true` 任务会在执行前清空本次 run 的记忆库。
 
+### 静态 Benchmark Dashboard
+
+运行以下命令生成完全自包含的离线展示页：
+
+```bash
+uv run agentmesh dashboard
+```
+
+默认输出为 `runs/latest/benchmarks/benchmark_dashboard.html`。页面自动汇总所有已配置和已生成的 suite，展示汇总指标、Text/Protocol 对比、全部任务明细、完整指标目录和实验报告证据。缺失或损坏的结果会显示为 `N/A`、`Not generated` 或诊断信息，不影响其他结果展示。可通过 `--output/-o` 指定其他输出位置。
+
 运行后主要产物：
 
 ```text

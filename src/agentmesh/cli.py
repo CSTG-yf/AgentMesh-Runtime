@@ -10,6 +10,7 @@ from agentmesh.chat.session import ChatTurn, run_chat_turn
 from agentmesh.encoding import configure_utf8_environment
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.compare import run_prompt_compare
+from agentmesh.eval.dashboard import generate_dashboard
 from agentmesh.eval.report import generate_report
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.maintenance import MemoryMaintenanceWorker
@@ -188,6 +189,22 @@ def report(
         paths = RuntimePaths(root=run.parent.parent if run.name == "latest" else root)
     path = generate_report(paths)
     console.print(f"Report written to {path}")
+
+
+@app.command()
+def dashboard(
+    root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output HTML path; defaults to the benchmark artifact directory.",
+        ),
+    ] = None,
+) -> None:
+    path = generate_dashboard(root, output)
+    console.print(f"[green]Benchmark dashboard:[/green] {path}")
 
 
 @memory_app.command("search")
