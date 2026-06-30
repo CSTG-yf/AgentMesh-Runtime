@@ -841,34 +841,6 @@ def _handoff_wire_bytes(messages: list[AMPMessage]) -> int:
     return total
 
 
-def _evidence_digest(evidence: list[dict[str, Any]]) -> str:
-    snippets: list[str] = []
-    has_memory_reuse = False
-    for item in evidence[:5]:
-        title = str(item.get("title", "evidence"))
-        snippet = str(item.get("snippet", ""))[:240]
-        reuse_hint = str(item.get("reuse_hint", ""))
-        if reuse_hint:
-            has_memory_reuse = True
-            snippets.append(f"{title} [记忆复用]: {snippet}")
-        else:
-            snippets.append(f"{title}: {snippet}")
-    if has_memory_reuse:
-        snippets.insert(
-            0,
-            "[MEMORY_REUSE_ACTIVE] The evidence below came from similar prior tasks. "
-            "Use it as a starting reference — adapt rather than recompute.",
-        )
-    return "\n".join(snippets)
-
-
-def _compact_text(text: str, limit: int) -> str:
-    cleaned = " ".join(text.split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return f"{cleaned[: max(0, limit - 1)]}…"
-
-
 def _compact_evidence_items(
     evidence: list[dict[str, Any]],
     *,
