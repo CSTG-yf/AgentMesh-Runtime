@@ -5,14 +5,19 @@ from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
 
 
-def generate_report(paths: RuntimePaths, *, suite_name: str | None = None) -> Path:
+def generate_report(
+    paths: RuntimePaths,
+    *,
+    suite_name: str | None = None,
+    track: str | None = None,
+) -> Path:
     summary_path = (
-        paths.benchmark_suite_summary(suite_name)
+        paths.benchmark_suite_summary(suite_name, track=track)
         if suite_name is not None
         else paths.benchmark_summary
     )
     report_path = (
-        paths.benchmark_suite_report(suite_name)
+        paths.benchmark_suite_report(suite_name, track=track)
         if suite_name is not None
         else paths.experiment_report
     )

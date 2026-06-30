@@ -1,5 +1,6 @@
 import math
 import statistics
+from collections.abc import Sequence
 
 from pydantic import BaseModel
 
@@ -14,7 +15,7 @@ class DistributionStats(BaseModel):
     maximum: float = 0.0
 
 
-def distribution_stats(values: list[int | float]) -> DistributionStats:
+def distribution_stats(values: Sequence[int | float]) -> DistributionStats:
     samples = sorted(float(value) for value in values)
     if not samples:
         return DistributionStats()
