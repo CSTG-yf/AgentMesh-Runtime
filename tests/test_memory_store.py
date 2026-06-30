@@ -128,8 +128,9 @@ def test_memory_store_semantic_search_handles_chinese_query(tmp_path: Path) -> N
     memory_store.put(unrelated)
     memory_store.put(relevant)
 
-    results = memory_store.semantic_search("留学选校因素", limit=1)
-    assert results[0].memory_id == relevant.memory_id
+    results = memory_store.semantic_search_with_scores("留学选校因素", limit=1)
+    assert results[0].memory.memory_id == relevant.memory_id
+    assert "hash_vector" in results[0].reason
 
 
 def test_memory_store_semantic_search_prefilters_candidates(

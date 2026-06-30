@@ -4,7 +4,11 @@ import pytest
 
 from agentmesh.errors import ProtocolError
 from agentmesh.llm.client import ChatMessage, LLMClient
-from agentmesh.modes.protocol_mode import _tool_feedback, run_protocol_mode
+from agentmesh.modes.protocol_mode import (
+    _compact_code_result_payload,
+    _tool_feedback,
+    run_protocol_mode,
+)
 from agentmesh.runtime.decision import PlannerDecision
 from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
@@ -13,6 +17,45 @@ from agentmesh.state.schema import StateType
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
+
+
+def test_code_result_compaction_preserves_reconstructable_contract() -> None:
+    payload = {
+        "stdout": '{"status": "validated"}',
+        "stderr": "",
+        "exit_code": 0,
+        "latency_ms": 3,
+        "backend": "rust",
+        "executor_result": {
+            "validated": True,
+            "llm_generated_code": True,
+            "codeact_code": "print('ok')",
+        },
+        "generated_files": [
+            {
+                "path": "C:/workspace/generated_code.py",
+                "relative_path": "generated_code.py",
+                "written": True,
+                "overwritten": False,
+                "bytes": 11,
+            }
+        ],
+        "tool_feedback": {"status": "success"},
+        "codeact": {
+            "code": "print('ok')",
+            "generated_by_llm": True,
+            "stdout": "ok",
+            "stderr": "",
+            "exit_code": 0,
+        },
+    }
+
+    compacted = _compact_code_result_payload(payload, text_limit=800)
+
+    assert compacted["codeact"]["code"] == "print('ok')"
+    assert compacted["executor_result"]["llm_generated_code"] is True
+    assert compacted["generated_files"][0]["written"] is True
+    assert compacted["generated_files"][0]["relative_path"] == "generated_code.py"
 
 
 def test_planner_decision_classifies_analysis_without_tool_execution() -> None:

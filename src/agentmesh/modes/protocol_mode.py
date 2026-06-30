@@ -841,34 +841,6 @@ def _handoff_wire_bytes(messages: list[AMPMessage]) -> int:
     return total
 
 
-def _evidence_digest(evidence: list[dict[str, Any]]) -> str:
-    snippets: list[str] = []
-    has_memory_reuse = False
-    for item in evidence[:5]:
-        title = str(item.get("title", "evidence"))
-        snippet = str(item.get("snippet", ""))[:240]
-        reuse_hint = str(item.get("reuse_hint", ""))
-        if reuse_hint:
-            has_memory_reuse = True
-            snippets.append(f"{title} [记忆复用]: {snippet}")
-        else:
-            snippets.append(f"{title}: {snippet}")
-    if has_memory_reuse:
-        snippets.insert(
-            0,
-            "[MEMORY_REUSE_ACTIVE] The evidence below came from similar prior tasks. "
-            "Use it as a starting reference — adapt rather than recompute.",
-        )
-    return "\n".join(snippets)
-
-
-def _compact_text(text: str, limit: int) -> str:
-    cleaned = " ".join(text.split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return f"{cleaned[: max(0, limit - 1)]}…"
-
-
 def _compact_evidence_items(
     evidence: list[dict[str, Any]],
     *,
@@ -895,6 +867,7 @@ def _compact_code_result_payload(payload: dict[str, Any], *, text_limit: int) ->
     if isinstance(codeact, dict):
         code = str(codeact.get("code", ""))
         codeact_summary = {
+            "code": code,
             "code_preview": _compact_text(code, text_limit),
             "code_chars": len(code),
             "generated_by_llm": bool(codeact.get("generated_by_llm")),
@@ -908,19 +881,31 @@ def _compact_code_result_payload(payload: dict[str, Any], *, text_limit: int) ->
         for item in generated_files:
             if not isinstance(item, dict):
                 continue
-            compact_files.append(
-                {
-                    "path": item.get("path", ""),
-                    "language": item.get("language", ""),
-                    "content_chars": len(str(item.get("content", ""))),
-                }
-            )
+            compact_item: dict[str, Any] = {
+                "path": str(item.get("path", "")),
+                "relative_path": str(item.get("relative_path", "")),
+                "written": bool(item.get("written", False)),
+                "overwritten": bool(item.get("overwritten", False)),
+                "bytes": int(item.get("bytes", 0)),
+            }
+            if item.get("error"):
+                compact_item["error"] = str(item["error"])
+            compact_files.append(compact_item)
+    executor_result = payload.get("executor_result")
+    compact_executor_result: dict[str, Any] = {}
+    if isinstance(executor_result, dict):
+        compact_executor_result = {
+            "validated": bool(executor_result.get("validated", False)),
+            "llm_generated_code": bool(executor_result.get("llm_generated_code", False)),
+            "state_refs_consumed": list(executor_result.get("state_refs_consumed", [])),
+        }
     return {
         "stdout": _compact_text(str(payload.get("stdout", "")), text_limit),
         "stderr": _compact_text(str(payload.get("stderr", "")), max(120, text_limit // 2)),
         "exit_code": payload.get("exit_code"),
         "latency_ms": payload.get("latency_ms"),
         "backend": payload.get("backend", ""),
+        "executor_result": compact_executor_result,
         "generated_files": compact_files,
         "tool_feedback": payload.get("tool_feedback", {}),
         "codeact": codeact_summary,

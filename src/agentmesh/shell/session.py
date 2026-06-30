@@ -195,7 +195,9 @@ class ShellSession:
             use_llm = False
             args = [arg for arg in args if arg != "--no-llm"]
         if len(args) != 1:
-            self.console.print("[red]Usage:[/red] /benchmark [--no-llm] standard|long|showcase|<suite.yaml>")
+            self.console.print(
+                "[red]Usage:[/red] /benchmark [--no-llm] standard|long|showcase|<suite.yaml>"
+            )
             return
         suite = _suite_path(self.paths.root, args[0])
         summary = run_benchmark(

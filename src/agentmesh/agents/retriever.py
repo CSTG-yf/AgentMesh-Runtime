@@ -159,15 +159,6 @@ def _run_memory_search(
     return results
 
 
-def _memory_reuse_limit(*, query: str, query_tags: list[str]) -> int:
-    lowered = query.lower()
-    if query_tags == ["general"]:
-        return 1
-    if any(term in lowered for term in ["memory", "reuse", "prior", "remember", "记忆", "复用"]):
-        return 3
-    return 2
-
-
 def _memory_reuse_limit(
     *,
     query: str,

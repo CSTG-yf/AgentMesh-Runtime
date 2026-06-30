@@ -1,9 +1,9 @@
 import csv
 import os
-import sqlite3
 import shutil
-from pathlib import Path
+import sqlite3
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import yaml
