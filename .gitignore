@@ -18,6 +18,7 @@ target/
 runs/
 data/
 .tmp-sandbox/
+.worktrees/
 /1.txt
 /generated_code.py
 
