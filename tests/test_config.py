@@ -118,6 +118,20 @@ def test_config_loads_protocol_budget_settings(tmp_path: Path) -> None:
     assert config.protocol.memory_reuse_default_limit == 2
 
 
+def test_protocol_handshake_is_enabled_by_default() -> None:
+    config = AgentMeshConfig.from_mapping({})
+
+    assert config.protocol.skip_handshake_for_inproc is False
+
+
+def test_protocol_handshake_can_be_skipped_explicitly() -> None:
+    config = AgentMeshConfig.from_mapping(
+        {"AGENTMESH_PROTOCOL_SKIP_HANDSHAKE_FOR_INPROC": "true"}
+    )
+
+    assert config.protocol.skip_handshake_for_inproc is True
+
+
 def test_protocol_mode_receives_optional_llm_config_from_env(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         "\n".join(

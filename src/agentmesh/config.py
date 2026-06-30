@@ -51,7 +51,7 @@ class StateConfig(BaseModel):
 
 
 class ProtocolConfig(BaseModel):
-    skip_handshake_for_inproc: bool = True
+    skip_handshake_for_inproc: bool = False
     state_summary_max_chars: int = 800
     evidence_snippet_max_chars: int = 160
     agent_log_output_max_chars: int = 1200
@@ -174,7 +174,7 @@ class AgentMeshConfig(BaseModel):
                 shm_threshold_bytes=state_shm_threshold,
             ),
             protocol=ProtocolConfig(
-                skip_handshake_for_inproc=_parse_bool(skip_handshake_raw, default=True),
+                skip_handshake_for_inproc=_parse_bool(skip_handshake_raw, default=False),
                 state_summary_max_chars=state_summary_max,
                 evidence_snippet_max_chars=evidence_snippet_max,
                 agent_log_output_max_chars=agent_log_output_max,

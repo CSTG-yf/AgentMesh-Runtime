@@ -115,13 +115,13 @@ Add tests that make the intended behavior explicit:
 
 ```python
 def test_protocol_handshake_is_enabled_by_default() -> None:
-    config = AgentMeshConfig.from_env({})
+    config = AgentMeshConfig.from_mapping({})
 
     assert config.protocol.skip_handshake_for_inproc is False
 
 
 def test_protocol_handshake_can_be_skipped_explicitly() -> None:
-    config = AgentMeshConfig.from_env(
+    config = AgentMeshConfig.from_mapping(
         {"AGENTMESH_PROTOCOL_SKIP_HANDSHAKE_FOR_INPROC": "true"}
     )
 
