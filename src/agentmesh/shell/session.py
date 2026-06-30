@@ -12,6 +12,7 @@ from agentmesh.config import AgentMeshConfig
 from agentmesh.core import rust_available
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.compare import run_prompt_compare, run_protocol_with_progress
+from agentmesh.eval.dashboard import generate_dashboard
 from agentmesh.eval.report import generate_report
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.maintenance import MemoryMaintenanceConfig, MemoryMaintenanceWorker
@@ -22,9 +23,9 @@ from agentmesh.modes.text_mode import run_text_mode
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.shell.commands import ParsedShellCommand, join_prompt, parse_shell_line
 from agentmesh.shell.render import (
+    render_benchmark,
     render_benchmark_artifacts,
     render_benchmark_progress,
-    render_benchmark,
     render_compare,
     render_compare_progress,
     render_config,
@@ -113,6 +114,9 @@ class ShellSession:
         if name == "report":
             report_path = generate_report(self.paths)
             render_path(self.console, "Report written", report_path)
+            return True
+        if name == "dashboard":
+            self._dashboard(command.args)
             return True
         if name == "config":
             self._config()
@@ -208,6 +212,16 @@ class ShellSession:
             suite_name=summary.suite_name,
             report_path=report_path,
         )
+
+    def _dashboard(self, args: list[str]) -> None:
+        if len(args) > 1:
+            self.console.print("[red]Usage:[/red] /dashboard [output.html]")
+            return
+        output = Path(args[0]) if args else None
+        if output is not None and not output.is_absolute():
+            output = self.paths.root / output
+        dashboard_path = generate_dashboard(self.paths.root, output)
+        render_path(self.console, "Dashboard written", dashboard_path)
 
     def _memory(self, args: list[str]) -> None:
         if len(args) < 2 or args[0] not in {"--keyword", "--tag", "--semantic"}:

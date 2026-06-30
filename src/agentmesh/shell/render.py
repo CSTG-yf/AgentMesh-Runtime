@@ -23,6 +23,11 @@ def render_help(console: Console) -> None:
     table.add_column("Usage")
     table.add_column("Purpose")
     rows = [
+        (
+            "/dashboard",
+            "/dashboard [output.html]",
+            "Generate a local benchmark dashboard",
+        ),
         ("text", "直接输入消息", "等同 /ask，走 Protocol Mode 交互式 LLM Agent"),
         ("/compare", "/compare [--no-llm] <task>", "流式展示双模式 Agent 输出和指标"),
         ("/ask", "/ask <message>", "流式展示 Protocol Agent 交互"),

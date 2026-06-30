@@ -2,8 +2,8 @@ from io import StringIO
 
 from rich.console import Console
 
-from agentmesh.eval.compare import CompareAgentOutput, CompareSummary
 from agentmesh.eval.benchmark import BenchmarkProgressEvent
+from agentmesh.eval.compare import CompareAgentOutput, CompareSummary
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.search import MemorySearchResult
@@ -49,8 +49,35 @@ def test_shell_help_and_config_do_not_fail(tmp_path) -> None:
     assert "运行展示型 A/B/C 套件" in rendered
     assert "/benchmark [--no-llm] <suite.yaml>" in rendered
     assert "运行自定义 YAML 评测套件" in rendered
+    assert "/dashboard" in rendered
     assert "llm_configured" in rendered
     assert "api_key" not in rendered.lower()
+
+
+def test_shell_dashboard_generates_static_html(tmp_path, monkeypatch) -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    session = ShellSession(paths=RuntimePaths(root=tmp_path), console=console)
+    calls = []
+
+    def fake_generate_dashboard(root, destination=None):
+        calls.append((root, destination))
+        path = destination or root / "runs/latest/benchmarks/benchmark_dashboard.html"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("<html></html>", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(
+        "agentmesh.shell.session.generate_dashboard",
+        fake_generate_dashboard,
+    )
+
+    assert session.handle_line("/dashboard")
+
+    assert calls == [(tmp_path, None)]
+    rendered = output.getvalue()
+    assert "Dashboard written" in rendered
+    assert "benchmark_dashboard.html" in rendered
 
 
 def test_shell_compare_runs_both_modes(tmp_path) -> None:

@@ -260,6 +260,7 @@ Shell 中直接输入一段消息，默认等同于 `/ask`，会走 Protocol Mod
 /memory --keyword|--tag|--semantic <query>
 /trace [limit]
 /report
+/dashboard [output.html]
 /config
 /exit
 ```
