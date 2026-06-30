@@ -29,6 +29,9 @@
 - SQLite 共享记忆、Rust Core、CodeAct 沙箱和静态 Dashboard。
 - Text Mode 与 Protocol Mode 双模式。
 - 离线确定性运行和真实 LLM 运行。
+- AgentShell 作为主要交互入口，保留裸文本自动路由 `/ask`、逐 Agent
+  流式输出、无损代码/Markdown 最终答案，以及 `/compare`、`/benchmark`、
+  `/dashboard`、`/memory`、`/trace`、`/config` 和 `/exit` 命令体验。
 
 ### 2.2 重构
 
@@ -410,3 +413,5 @@ Dashboard 首页只展示评委需要的五类结论：
 - 单次连续任务不少于 10 轮。
 - openEuler 24.03-LTS-SP3 上完成构建、测试和 benchmark。
 - 技术报告中的每个性能结论都有对应原始记录。
+- AgentShell 核心命令、裸文本问答、流式输出、代码字符保真和异常后继续交互的
+  回归测试全部通过。
