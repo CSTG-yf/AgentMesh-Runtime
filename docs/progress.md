@@ -27,6 +27,30 @@
 | 22 | Review hardening: agents dereference StateRefs, RetrieverAgent owns memory search, and route normalization uses capability advertisements | Completed | `tests/test_agent_state_refs.py`, `tests/test_dynamic_agent_routing.py::test_planner_decision_normalizes_route_from_capability_advertisements`, `tests/test_hybrid_memory.py` |
 | 23 | P0 engineering baseline: AgentShell regression contract, CodeAct state schema, memory ranking, static quality, and ten-round stability | Completed | `uv run ruff check .`, `uv run mypy src`, `uv run pytest` |
 | 24 | P1 reproducible benchmark: track isolation, immutable manifest, paired ordering, task hashes, and distribution statistics | Completed | `tests/test_experiment_manifest.py`, `tests/test_benchmark_statistics.py`, `tests/test_modes_and_benchmark.py`, `tests/test_benchmark_dashboard.py` |
+| 25 | P2 evidence-based quality: versioned task rules, paired scoring, unscored semantics, quality aggregates, report/dashboard/AgentShell evidence | Completed | `tests/test_quality_spec.py`, `tests/test_benchmark_quality_configs.py`, `tests/test_modes_and_benchmark.py`, `tests/test_benchmark_dashboard.py`, `tests/test_shell.py` |
+
+## 2026-07-02 P2 Evidence-Based Quality
+
+- Removed the answer-length quality estimator from production mode metrics.
+- Added versioned `non_empty`, `contains_all`, and `regex` rules with partial
+  credit and configurable pass thresholds.
+- Text and Protocol answers are evaluated by the same task rule after each
+  paired run; direct mode runs remain explicitly unscored.
+- Unscored pairs are counted and excluded from quality means, pass rates, and
+  deltas. Missing values render as `N/A`.
+- All 20 tasks across the standard, long-context, and showcase contest suites
+  now define auditable quality rules tied to task facts, required structure,
+  or execution evidence.
+- Detail JSONL records full rule evidence. CSV summaries, Markdown reports,
+  the dashboard, and AgentShell expose scored/unscored counts, per-mode means
+  and pass rates, and the Protocol-minus-Text score delta.
+- Final P2 verification: Ruff passed, mypy reported no issues in 73 source
+  files, and pytest reported 169 passed with 13 Rust-dependent skips.
+- The real offline `standard` run scored all 6 paired tasks with 0 unscored:
+  Text quality mean/pass rate was `0.00 / 0%`, Protocol was
+  `0.25 / 16.67%`, and the Protocol-minus-Text quality delta was `+0.25`.
+  These values expose weak deterministic answer quality rather than masking it
+  with answer length and establish the next optimization target.
 
 ## 2026-06-30 P1 Reproducible Benchmark
 

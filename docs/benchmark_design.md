@@ -11,7 +11,7 @@ Tracked metrics:
 - state transfer count and bytes
 - memory query count and hit count
 - latency
-- deterministic quality score
+- task-defined quality score, pass status, and rule identity
 
 Generated artifacts:
 
@@ -66,10 +66,47 @@ Report format:
 - `## StateRef Sample`
 - `## MemoryUnit Sample`
 
+## Evidence-Based Quality Schema
+
+Quality is defined by each benchmark task under a versioned `quality` mapping:
+
+```yaml
+quality:
+  version: "1.0"
+  rule_id: sa3-output-v1
+  kind: contains_all
+  expected: ["77", "5"]
+  pass_threshold: 1.0
+```
+
+Supported rule kinds are:
+
+- `contains_all`: case-insensitive fact matching with partial credit equal to
+  matched facts divided by expected facts.
+- `regex`: case-insensitive structural or execution-evidence matching.
+- `non_empty`: binary validation for tasks where any non-empty answer is the
+  complete requirement.
+
+The same rule evaluates the paired Text and Protocol answers. A score passes
+when it is greater than or equal to `pass_threshold`. Detail rows record the
+rule ID, score, pass status, matched count, total count, and reason. Summaries
+report scored and unscored pair counts, per-mode score means and pass rates,
+and `Protocol mean - Text mean` as the quality score delta.
+
+Tasks without a quality rule are explicitly `unscored`. They are counted but
+excluded from means, pass rates, and deltas; missing quality renders as `N/A`,
+never zero. Direct mode runs and `/compare` are likewise unscored unless an
+explicit evaluator supplies scores.
+
+Answer length is prohibited as quality evidence. Length measures verbosity,
+not correctness, task completion, or execution validity, and can reward a
+longer wrong answer. Rules must instead check task facts, required structure,
+or concrete execution evidence such as a successful sandbox result.
+
 ## Fairness Rules
 
-Text Mode and Protocol Mode must run the same task suite, repeat count, and quality scoring
-function. Text Mode is deliberately unoptimized: it passes the complete text context from one
+Text Mode and Protocol Mode must run the same task suite, repeat count, and task-defined quality
+rule. Text Mode is deliberately unoptimized: it passes the complete text context from one
 agent to the next and must not use Rust Core, typed envelopes, StateRefs, embeddings, shared
 memory, sandbox execution, or hidden state processing. Rust optimizations may reduce
 serialization, indexing, state-transfer, and retrieval overhead only in Protocol Mode.

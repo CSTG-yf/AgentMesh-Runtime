@@ -556,7 +556,7 @@ E:/system-compute/
   src/agentmesh/eval/benchmark.py                # Benchmark suite 读取、双模式运行和聚合
   src/agentmesh/eval/compare.py                  # 用户 prompt 双模式即时对比
   src/agentmesh/eval/metrics.py                  # RunMetrics、token 估算和指标模型
-  src/agentmesh/eval/quality.py                  # 确定性答案质量估计
+  src/agentmesh/eval/quality_spec.py             # 版本化质量规则和可审计评估
   src/agentmesh/eval/report.py                   # experiment_report.md 生成
 
   src/agentmesh/llm/__init__.py                  # LLM 包导出
