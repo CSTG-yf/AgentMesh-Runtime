@@ -12,16 +12,31 @@ tasks:
     topic: implement quicksort
     input_file: examples/tasks/showcase/A1_quicksort.txt
     tags: [phase-a, sorting, algorithm]
+    quality:
+      version: "1.0"
+      rule_id: sh-a1-quicksort-v1
+      kind: regex
+      pattern: 'sandbox exit 0|\[\s*0,\s*1,\s*2,\s*3,\s*4,\s*5,\s*6,\s*7,\s*8,\s*9\s*\]'
   - id: SH-A2
     group: A
     topic: implement binary search
     input_file: examples/tasks/showcase/A2_binary_search.txt
     tags: [phase-a, searching, algorithm]
+    quality:
+      version: "1.0"
+      rule_id: sh-a2-binary-search-v1
+      kind: regex
+      pattern: 'sandbox exit 0|(?:index|result)\D{0,12}3'
   - id: SH-A3
     group: A
     topic: word frequency counter
     input_file: examples/tasks/showcase/A3_word_freq.txt
     tags: [phase-a, frequency, text]
+    quality:
+      version: "1.0"
+      rule_id: sh-a3-word-frequency-v1
+      kind: regex
+      pattern: '(?m)^\s*the\s*[:=]?\s*4\s*$'
 
   # ════════════════════════════════════════════
   # Phase B — Memory reuse (warm start)
@@ -34,18 +49,33 @@ tasks:
     input_file: examples/tasks/showcase/B1_mergesort.txt
     tags: [phase-b, sorting, reuse]
     depends_on: [SH-A1]
+    quality:
+      version: "1.0"
+      rule_id: sh-b1-mergesort-v1
+      kind: regex
+      pattern: 'sandbox exit 0|\[\s*1,\s*3,\s*4,\s*6,\s*7,\s*9,\s*11,\s*15,\s*18,\s*22\s*\]'
   - id: SH-B2
     group: B
     topic: implement linear search
     input_file: examples/tasks/showcase/B2_linear_search.txt
     tags: [phase-b, searching, reuse]
     depends_on: [SH-A2]
+    quality:
+      version: "1.0"
+      rule_id: sh-b2-linear-search-v1
+      kind: regex
+      pattern: 'sandbox exit 0|(?:index|result)\D{0,12}2'
   - id: SH-B3
     group: B
     topic: character frequency counter
     input_file: examples/tasks/showcase/B3_char_freq.txt
     tags: [phase-b, frequency, reuse]
     depends_on: [SH-A3]
+    quality:
+      version: "1.0"
+      rule_id: sh-b3-character-frequency-v1
+      kind: regex
+      pattern: '(?m)^\s*e\s*[:=]?\s*9\s*$'
 
   # ════════════════════════════════════════════
   # Phase C — Cold baseline (memory cleared)
@@ -58,15 +88,30 @@ tasks:
     input_file: examples/tasks/showcase/B1_mergesort.txt
     tags: [phase-c, sorting, cold]
     cold_start: true
+    quality:
+      version: "1.0"
+      rule_id: sh-c1-mergesort-v1
+      kind: regex
+      pattern: 'sandbox exit 0|\[\s*1,\s*3,\s*4,\s*6,\s*7,\s*9,\s*11,\s*15,\s*18,\s*22\s*\]'
   - id: SH-C2
     group: C
     topic: implement linear search (cold)
     input_file: examples/tasks/showcase/B2_linear_search.txt
     tags: [phase-c, searching, cold]
     cold_start: true
+    quality:
+      version: "1.0"
+      rule_id: sh-c2-linear-search-v1
+      kind: regex
+      pattern: 'sandbox exit 0|(?:index|result)\D{0,12}2'
   - id: SH-C3
     group: C
     topic: character frequency counter (cold)
     input_file: examples/tasks/showcase/B3_char_freq.txt
     tags: [phase-c, frequency, cold]
     cold_start: true
+    quality:
+      version: "1.0"
+      rule_id: sh-c3-character-frequency-v1
+      kind: regex
+      pattern: '(?m)^\s*e\s*[:=]?\s*9\s*$'

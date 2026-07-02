@@ -6,23 +6,48 @@ tasks:
     topic: sort integer array
     input_file: examples/tasks/long_context/LC1_sort.txt
     tags: [chain, sort, code]
+    quality:
+      version: "1.0"
+      rule_id: lc1-sorted-output-v1
+      kind: regex
+      pattern: '\[\s*0,\s*1,\s*2,\s*3,\s*4,\s*5,\s*6,\s*7,\s*8,\s*9\s*\]'
   - id: LC2
     group: A
     topic: compute median
     input_file: examples/tasks/long_context/LC2_median.txt
     tags: [chain, compute, statistics]
+    quality:
+      version: "1.0"
+      rule_id: lc2-median-sum-v1
+      kind: contains_all
+      expected: ["median", "4", "45"]
   - id: LC3
     group: A
     topic: count above median
     input_file: examples/tasks/long_context/LC3_count_above_median.txt
     tags: [chain, count, compute]
+    quality:
+      version: "1.0"
+      rule_id: lc3-count-sum-v1
+      kind: contains_all
+      expected: ["5", "35"]
   - id: LC4
     group: A
     topic: find min max range
     input_file: examples/tasks/long_context/LC4_min_max_range.txt
     tags: [chain, analyze, statistics]
+    quality:
+      version: "1.0"
+      rule_id: lc4-range-v1
+      kind: regex
+      pattern: '(?s)min\D{0,12}0.*max\D{0,12}9.*range\D{0,12}9'
   - id: LC5
     group: A
     topic: summarize chain results
     input_file: examples/tasks/long_context/LC5_summary.txt
     tags: [chain, report, summary]
+    quality:
+      version: "1.0"
+      rule_id: lc5-chain-summary-v1
+      kind: contains_all
+      expected: ["[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]", "median", "35", "range"]

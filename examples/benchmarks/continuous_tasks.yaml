@@ -6,28 +6,58 @@ tasks:
     topic: analyze sorting benchmark
     input_file: examples/tasks/standard/A1_analyze_sorting.txt
     tags: [analysis, sort, benchmark]
+    quality:
+      version: "1.0"
+      rule_id: sa1-analysis-v1
+      kind: contains_all
+      expected: ["partially sorted", "comparisons", "swaps"]
   - id: SA2
     group: A
     topic: implement quicksort
     input_file: examples/tasks/standard/A2_quicksort.txt
     tags: [code, sort, implement]
+    quality:
+      version: "1.0"
+      rule_id: sa2-codeact-v1
+      kind: regex
+      pattern: 'sandbox exit 0|\[\s*0,\s*1,\s*2,\s*3,\s*4,\s*5,\s*6,\s*7,\s*8,\s*9\s*\]'
   - id: SA3
     group: A
     topic: compute sum and even count
     input_file: examples/tasks/standard/A3_sum_even.txt
     tags: [compute, count, statistics]
+    quality:
+      version: "1.0"
+      rule_id: sa3-output-v1
+      kind: contains_all
+      expected: ["77", "5"]
   - id: SB1
     group: B
     topic: search memory then benchmark sorting
     input_file: examples/tasks/standard/B1_memory_sort_benchmark.txt
     tags: [code, search, benchmark]
+    quality:
+      version: "1.0"
+      rule_id: sb1-benchmark-output-v1
+      kind: regex
+      pattern: 'sandbox exit 0|first.{0,120}last|last.{0,120}first'
   - id: SB2
     group: B
     topic: character frequency count
     input_file: examples/tasks/standard/B2_char_freq.txt
     tags: [compute, frequency, text]
+    quality:
+      version: "1.0"
+      rule_id: sb2-frequency-v1
+      kind: regex
+      pattern: '(?m)^\s*o\s*[:=]?\s*6\s*$'
   - id: SB3
     group: B
     topic: compare linear vs binary search
     input_file: examples/tasks/standard/B3_compare_search.txt
     tags: [analysis, search, compare]
+    quality:
+      version: "1.0"
+      rule_id: sb3-search-analysis-v1
+      kind: contains_all
+      expected: ["55", "linear search", "binary search"]
