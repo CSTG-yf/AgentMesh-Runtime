@@ -22,6 +22,7 @@ from agentmesh.eval.experiment import (
     paired_mode_order,
 )
 from agentmesh.eval.metrics import TOKEN_ESTIMATOR, ModeRunResult, RunMetrics
+from agentmesh.eval.quality_spec import QualityResult, QualitySpec, evaluate_quality
 from agentmesh.eval.statistics import DistributionStats, distribution_stats
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.modes.text_mode import run_text_mode
@@ -67,7 +68,13 @@ class BenchmarkSummary(BaseModel):
     memory_avg_score: float
     memory_avg_semantic_similarity: float
     memory_avg_tag_overlap_score: float
-    quality_preservation_rate: float
+    quality_scored_runs: int
+    quality_unscored_runs: int
+    text_quality_mean: float | None
+    protocol_quality_mean: float | None
+    text_quality_pass_rate: float | None
+    protocol_quality_pass_rate: float | None
+    quality_score_delta: float | None
     rust_core_enabled_runs: int
     rust_sandbox_backend_runs: int
     transport_send_count: int
@@ -103,6 +110,7 @@ class BenchmarkDetailRecord(BaseModel):
     mode: str
     trace_id: str
     metrics: RunMetrics
+    quality: QualityResult
 
 
 class BenchmarkProgressEvent(BaseModel):
@@ -204,8 +212,12 @@ def run_benchmark(
     memory_score_weighted_total = 0.0
     memory_semantic_weighted_total = 0.0
     memory_tag_overlap_weighted_total = 0.0
-    text_quality = 0.0
-    protocol_quality = 0.0
+    quality_scored_runs = 0
+    quality_unscored_runs = 0
+    text_quality_scores: list[float] = []
+    protocol_quality_scores: list[float] = []
+    text_quality_passes: list[float] = []
+    protocol_quality_passes: list[float] = []
     rust_core_enabled_runs = 0
     rust_sandbox_backend_runs = 0
     transport_send_count = 0
@@ -250,6 +262,12 @@ def run_benchmark(
                     ),
                 )
             input_file = paths.root / str(task["input_file"])
+            raw_quality = task.get("quality")
+            quality_spec = (
+                QualitySpec.model_validate(raw_quality)
+                if isinstance(raw_quality, dict)
+                else None
+            )
             pair_index = _round * len(tasks) + task_index - 1
             pair_order = paired_mode_order(seed=seed, pair_index=pair_index)
             results: dict[str, ModeRunResult] = {}
@@ -285,6 +303,22 @@ def run_benchmark(
                 )
             text_result = results["text"]
             protocol_result = results["protocol"]
+            quality_results = {
+                "text": evaluate_quality(text_result.answer, quality_spec),
+                "protocol": evaluate_quality(protocol_result.answer, quality_spec),
+            }
+            if quality_spec is None:
+                quality_unscored_runs += 1
+            else:
+                quality_scored_runs += 1
+                text_quality = quality_results["text"]
+                protocol_quality = quality_results["protocol"]
+                if text_quality.score is None or protocol_quality.score is None:
+                    raise BenchmarkConfigError("Configured quality rule returned no score")
+                text_quality_scores.append(text_quality.score)
+                protocol_quality_scores.append(protocol_quality.score)
+                text_quality_passes.append(float(text_quality.passed))
+                protocol_quality_passes.append(float(protocol_quality.passed))
             logical_runs += 1
             text_token_sample = _token_metric(text_result.metrics)
             protocol_token_sample = _token_metric(protocol_result.metrics)
@@ -333,8 +367,6 @@ def run_benchmark(
                 protocol_result.metrics.memory_avg_tag_overlap_score
                 * protocol_result.metrics.memory_reused_unit_count
             )
-            text_quality += text_result.metrics.answer_quality_score
-            protocol_quality += protocol_result.metrics.answer_quality_score
             rust_core_enabled_runs += int(protocol_result.metrics.rust_core_enabled)
             rust_sandbox_backend_runs += int(protocol_result.metrics.sandbox_backend == "rust")
             transport_send_count += protocol_result.metrics.transport_send_count
@@ -371,6 +403,7 @@ def run_benchmark(
                     mode=result.mode,
                     trace_id=result.trace_id,
                     metrics=result.metrics,
+                    quality=quality_results[result.mode],
                 )
                 append_jsonl(
                     detail_path,
@@ -440,7 +473,16 @@ def run_benchmark(
             if memory_reused_units
             else 0.0
         ),
-        quality_preservation_rate=protocol_quality / text_quality if text_quality else 0.0,
+        quality_scored_runs=quality_scored_runs,
+        quality_unscored_runs=quality_unscored_runs,
+        text_quality_mean=_mean_or_none(text_quality_scores),
+        protocol_quality_mean=_mean_or_none(protocol_quality_scores),
+        text_quality_pass_rate=_mean_or_none(text_quality_passes),
+        protocol_quality_pass_rate=_mean_or_none(protocol_quality_passes),
+        quality_score_delta=_quality_delta(
+            text_quality_scores,
+            protocol_quality_scores,
+        ),
         rust_core_enabled_runs=rust_core_enabled_runs,
         rust_sandbox_backend_runs=rust_sandbox_backend_runs,
         transport_send_count=transport_send_count,
@@ -610,6 +652,23 @@ def _rate(baseline: int, candidate: int) -> float:
     if baseline <= 0:
         return 0.0
     return (baseline - candidate) / baseline
+
+
+def _mean_or_none(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _quality_delta(
+    text_scores: list[float],
+    protocol_scores: list[float],
+) -> float | None:
+    text_mean = _mean_or_none(text_scores)
+    protocol_mean = _mean_or_none(protocol_scores)
+    if text_mean is None or protocol_mean is None:
+        return None
+    return protocol_mean - text_mean
 
 
 def _token_metric(metrics: RunMetrics) -> int:

@@ -4,7 +4,6 @@ from typing import cast
 from uuid import uuid4
 
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
-from agentmesh.eval.quality import deterministic_quality_score
 from agentmesh.llm.client import ChatMessage, LLMClient, create_llm_client
 from agentmesh.runtime.decision import PlannerDecision
 from agentmesh.runtime.orchestrator import default_registry
@@ -103,7 +102,6 @@ def run_text_mode(
         agent_io_bytes=agent_io_bytes,
         per_msg_avg_tokens=(agent_io_tokens / len(agents) if agents else 0.0),
         latency_ms=latency_ms,
-        answer_quality_score=deterministic_quality_score(answer),
         dynamic_route=selected_agents,
         selected_agents=list(dict.fromkeys(selected_agents)),
         skipped_agents=[

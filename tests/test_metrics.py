@@ -12,3 +12,6 @@ def test_run_metrics_records_token_estimator() -> None:
     metrics = RunMetrics()
 
     assert metrics.token_estimator == TOKEN_ESTIMATOR
+    assert metrics.answer_quality_score is None
+    assert metrics.quality_rule_id == "unscored"
+    assert metrics.quality_passed is None

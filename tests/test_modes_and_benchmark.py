@@ -464,6 +464,71 @@ tasks:
     assert paths.benchmark_suite_detail("suite_b", track="deterministic").exists()
 
 
+def test_benchmark_applies_same_quality_rule_to_both_modes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Return alpha and beta.", encoding="utf-8")
+    suite = tmp_path / "quality_suite.yaml"
+    suite.write_text(
+        """
+name: quality_suite
+tasks:
+  - id: Q1
+    input_file: task.txt
+    quality:
+      rule_id: two-facts-v1
+      kind: contains_all
+      expected: [alpha, beta]
+  - id: Q2
+    input_file: task.txt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def fake_text_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="text",
+            trace_id="trace-text",
+            answer="alpha",
+            metrics=RunMetrics(estimated_tokens=10, wire_bytes=100),
+        )
+
+    def fake_protocol_mode(*, task_path, paths, load_configured_llm=True):
+        del task_path, paths, load_configured_llm
+        return ModeRunResult(
+            mode="protocol",
+            trace_id="trace-protocol",
+            answer="alpha beta",
+            metrics=RunMetrics(estimated_tokens=5, wire_bytes=50),
+        )
+
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text_mode)
+    monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol_mode)
+
+    paths = RuntimePaths(root=tmp_path)
+    summary = run_benchmark(suite_path=suite, paths=paths, use_llm=False)
+
+    assert summary.quality_scored_runs == 1
+    assert summary.quality_unscored_runs == 1
+    assert summary.text_quality_mean == 0.5
+    assert summary.protocol_quality_mean == 1.0
+    assert summary.text_quality_pass_rate == 0.0
+    assert summary.protocol_quality_pass_rate == 1.0
+    assert summary.quality_score_delta == 0.5
+
+    rows = read_jsonl(
+        paths.benchmark_suite_detail("quality_suite", track="deterministic")
+    )
+    scored_rows = [row for row in rows if row["task_id"] == "Q1"]
+    unscored_rows = [row for row in rows if row["task_id"] == "Q2"]
+    assert {row["quality"]["rule_id"] for row in scored_rows} == {"two-facts-v1"}
+    assert {row["quality"]["score"] for row in scored_rows} == {0.5, 1.0}
+    assert all(not row["quality"]["scored"] for row in unscored_rows)
+
+
 def test_benchmark_rerun_overwrites_same_suite_artifacts(
     tmp_path: Path,
     monkeypatch,

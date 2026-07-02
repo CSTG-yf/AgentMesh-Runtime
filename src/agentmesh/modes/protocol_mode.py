@@ -9,7 +9,6 @@ import orjson
 from agentmesh.core import rust_available
 from agentmesh.errors import SandboxTimeoutError
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
-from agentmesh.eval.quality import deterministic_quality_score
 from agentmesh.llm.client import LLMClient
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.schema import MemoryUnit
@@ -580,7 +579,6 @@ def _run_protocol_mode_impl(
         memory_avg_tag_overlap_score=memory_quality["avg_tag_overlap_score"],
         latency_ms=latency_ms,
         stage_latency_ms=stage_latency_ms,
-        answer_quality_score=deterministic_quality_score(summary_text),
         dynamic_route=scheduler.selected_agents,
         selected_agents=list(dict.fromkeys(scheduler.selected_agents)),
         skipped_agents=[

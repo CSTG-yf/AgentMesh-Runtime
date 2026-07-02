@@ -44,7 +44,9 @@ class RunMetrics(BaseModel):
     memory_avg_tag_overlap_score: float = 0.0
     latency_ms: int = 0
     stage_latency_ms: dict[str, int] = Field(default_factory=dict)
-    answer_quality_score: float = 1.0
+    answer_quality_score: float | None = None
+    quality_rule_id: str = "unscored"
+    quality_passed: bool | None = None
     dynamic_route: list[str] = Field(default_factory=list)
     selected_agents: list[str] = Field(default_factory=list)
     skipped_agents: list[str] = Field(default_factory=list)

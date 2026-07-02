@@ -49,7 +49,7 @@ class CompareSummary(BaseModel):
     wire_bytes_reduction_rate: float
     fair_wire_reduction_rate: float = 0.0
     agent_io_bytes_reduction_rate: float = 0.0
-    quality_preservation_rate: float = 1.0
+    quality_preservation_rate: float | None = None
     memory_hit_rate: float
     memory_query_count: int = 0
     memory_query_hit_count: int = 0
@@ -335,9 +335,17 @@ def _byte_metric(metrics: RunMetrics) -> int:
     return metrics.protocol_total_bytes or metrics.agent_io_bytes or metrics.wire_bytes
 
 
-def _quality_preservation_rate(text_metrics: RunMetrics, protocol_metrics: RunMetrics) -> float:
+def _quality_preservation_rate(
+    text_metrics: RunMetrics,
+    protocol_metrics: RunMetrics,
+) -> float | None:
+    if (
+        text_metrics.answer_quality_score is None
+        or protocol_metrics.answer_quality_score is None
+    ):
+        return None
     if text_metrics.answer_quality_score <= 0:
-        return 1.0
+        return None
     return round(protocol_metrics.answer_quality_score / text_metrics.answer_quality_score, 4)
 
 

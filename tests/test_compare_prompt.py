@@ -23,6 +23,7 @@ def test_prompt_compare_runs_both_modes_from_user_input(tmp_path) -> None:
     assert summary.text.metrics.wire_bytes > 0
     assert summary.protocol.metrics.wire_bytes > 0
     assert summary.task_path.endswith(".txt")
+    assert summary.quality_preservation_rate is None
 
 
 def test_prompt_compare_uses_llm_by_default_and_can_disable_it(
