@@ -2,14 +2,20 @@ from io import StringIO
 
 from rich.console import Console
 
-from agentmesh.eval.benchmark import BenchmarkProgressEvent
+from agentmesh.eval.benchmark import BenchmarkProgressEvent, BenchmarkSummary
 from agentmesh.eval.compare import CompareAgentOutput, CompareSummary
 from agentmesh.eval.experiment import BenchmarkTrack
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
+from agentmesh.eval.statistics import DistributionStats
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.search import MemorySearchResult
 from agentmesh.shell.commands import parse_shell_line
-from agentmesh.shell.render import _aligned_agent_output_rows, render_compare, render_memory
+from agentmesh.shell.render import (
+    _aligned_agent_output_rows,
+    render_benchmark,
+    render_compare,
+    render_memory,
+)
 from agentmesh.shell.session import ShellSession
 from agentmesh.storage.agent_io import append_protocol_agent_io
 from agentmesh.storage.jsonl import append_jsonl
@@ -377,6 +383,71 @@ def test_render_compare_shows_answers_agent_outputs_then_metrics() -> None:
     assert "fair_wire_reduction_rate（仅 wire 层降低率）" in rendered
     assert "agent_io_bytes_reduction_rate（Agent I/O 字节降低率）" in rendered
     assert "memory avg tag overlap" not in rendered
+
+
+def test_render_benchmark_shows_quality_evidence() -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=160)
+    empty_stats = DistributionStats(
+        count=1,
+        mean=1.0,
+        stddev=0.0,
+        p50=1.0,
+        p95=1.0,
+        minimum=1.0,
+        maximum=1.0,
+    )
+    summary = BenchmarkSummary.model_construct(
+        suite_name="quality_suite",
+        track=BenchmarkTrack.DETERMINISTIC,
+        total_runs=2,
+        schema_version="2.0",
+        experiment_id="exp-quality",
+        repeat_count=1,
+        seed=0,
+        text_latency_stats=empty_stats,
+        protocol_latency_stats=empty_stats,
+        text_agent_io_tokens=10,
+        protocol_agent_io_tokens=5,
+        text_agent_io_bytes=100,
+        protocol_agent_io_bytes=50,
+        text_per_msg_avg_tokens=5.0,
+        protocol_per_msg_avg_tokens=2.5,
+        text_wire_bytes=100,
+        protocol_wire_bytes=50,
+        protocol_total_bytes=80,
+        token_saving_rate=0.5,
+        wire_bytes_reduction_rate=0.2,
+        fair_wire_reduction_rate=0.5,
+        agent_io_bytes_reduction_rate=0.5,
+        protocol_state_payload_bytes=20,
+        state_shm_transfer_count=0,
+        memory_hit_rate=0.0,
+        memory_reused_unit_count=0,
+        memory_evidence_bytes=0,
+        memory_avg_evidence_bytes_per_query=0.0,
+        memory_avg_semantic_similarity=0.0,
+        quality_scored_runs=1,
+        quality_unscored_runs=1,
+        text_quality_mean=0.5,
+        protocol_quality_mean=1.0,
+        text_quality_pass_rate=0.0,
+        protocol_quality_pass_rate=1.0,
+        quality_score_delta=0.5,
+        feedback_round_count=0,
+        rust_core_enabled_runs=0,
+        latency_reduction_rate=0.0,
+    )
+
+    render_benchmark(console, summary)
+
+    rendered = output.getvalue()
+    assert rendered.index("Quality scored pairs") < rendered.index("Text quality mean")
+    assert rendered.index("Unscored pairs") < rendered.index("Text quality mean")
+    assert "Text quality mean / pass rate" in rendered
+    assert "Protocol quality mean / pass rate" in rendered
+    assert "Quality score delta" in rendered
+    assert "quality preservation rate" not in rendered.lower()
 
 
 def test_render_memory_shows_semantic_score_and_vector_source_content() -> None:

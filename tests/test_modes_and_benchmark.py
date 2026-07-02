@@ -374,6 +374,12 @@ tasks:
     assert "MemoryAvgScore" in report_text
     assert "MemoryAvgSemanticSimilarity" in report_text
     assert "MemoryAvgTagOverlapScore" in report_text
+    assert "Quality scored pairs" in report_text
+    assert "Unscored pairs" in report_text
+    assert "Text quality mean / pass rate" in report_text
+    assert "Protocol quality mean / pass rate" in report_text
+    assert "Quality score delta" in report_text
+    assert "QualityPreservationRate" not in report_text
     assert "FeedbackRoundCount" in report_text
     assert "TransportSendCount" in report_text
     assert "StateShmTransferCount" in report_text

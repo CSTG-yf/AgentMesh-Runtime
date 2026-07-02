@@ -88,13 +88,17 @@ def test_generate_dashboard_is_self_contained_complete_and_safe(tmp_path: Path) 
 
     suite = _write_suite(tmp_path, "demo")
     (suite / "benchmark_summary.csv").write_text(
-        "suite_name,total_runs,token_saving_rate,custom_metric\n"
-        "demo,1,0.5,7\n",
+        "suite_name,total_runs,token_saving_rate,quality_scored_runs,"
+        "quality_unscored_runs,text_quality_mean,protocol_quality_mean,"
+        "text_quality_pass_rate,protocol_quality_pass_rate,quality_score_delta,"
+        "custom_metric\n"
+        "demo,1,0.5,1,0,0.5,1.0,0.0,1.0,0.5,7\n",
         encoding="utf-8",
     )
     (suite / "benchmark_detail.jsonl").write_text(
         '{"task_id":"</script><b>x</b>","group":"A","mode":"protocol",'
-        '"trace_id":"trace-1","metrics":{"latency_ms":10}}\n',
+        '"trace_id":"trace-1","metrics":{"latency_ms":10},'
+        '"quality":{"rule_id":"demo-v1","scored":true,"passed":true,"score":1.0}}\n',
         encoding="utf-8",
     )
     (suite / "experiment_report.md").write_text(
@@ -114,6 +118,12 @@ def test_generate_dashboard_is_self_contained_complete_and_safe(tmp_path: Path) 
     assert "Task results" in html
     assert "All metrics" in html
     assert "Evidence &amp; diagnostics" in html
+    assert "Quality scored pairs" in html
+    assert "Unscored pairs" in html
+    assert "Text quality mean / pass rate" in html
+    assert "Protocol quality mean / pass rate" in html
+    assert "Quality score delta" in html
+    assert "quality_preservation_rate" not in html
 
 
 def test_generate_dashboard_without_artifacts_shows_safe_empty_state(tmp_path: Path) -> None:

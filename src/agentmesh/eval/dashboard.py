@@ -327,7 +327,8 @@ const label=k=>k.replaceAll("_"," ").replace(/\b\w/g,c=>c.toUpperCase());
 const statusLabel=s=>({complete:"Completed",partial:"Partial data",not_generated:"Not generated"}[s]||s);
 const metric=(obj,key)=>finite(obj?.[key])?obj[key]:null;
 const groups={
- "Efficiency":["total_runs","token_estimator","token_saving_rate","agent_io_bytes_reduction_rate","text_agent_io_tokens","protocol_agent_io_tokens","text_per_msg_avg_tokens","protocol_per_msg_avg_tokens","latency_reduction_rate","quality_preservation_rate"],
+ "Quality evidence":["quality_scored_runs","quality_unscored_runs","text_quality_mean","protocol_quality_mean","text_quality_pass_rate","protocol_quality_pass_rate","quality_score_delta"],
+ "Efficiency":["total_runs","token_estimator","token_saving_rate","agent_io_bytes_reduction_rate","text_agent_io_tokens","protocol_agent_io_tokens","text_per_msg_avg_tokens","protocol_per_msg_avg_tokens","latency_reduction_rate"],
  "Communication":["wire_bytes_reduction_rate","fair_wire_reduction_rate","text_agent_io_bytes","protocol_agent_io_bytes","protocol_total_bytes","text_wire_bytes","protocol_wire_bytes","protocol_session_dictionary_bytes","protocol_typed_envelope_bytes","protocol_typed_payload_bytes","protocol_compact_message_bytes","protocol_json_wire_bytes","protocol_state_payload_bytes"],
  "Memory":["memory_hit_rate","memory_reused_unit_count","memory_evidence_count","memory_evidence_bytes","memory_avg_evidence_bytes_per_query","memory_avg_reused_units_per_query","memory_avg_score","memory_avg_semantic_similarity","memory_avg_tag_overlap_score"],
  "Transport & Runtime":["rust_core_enabled_runs","rust_sandbox_backend_runs","transport_send_count","transport_bytes","transport_avg_latency_ms","transport_p99_latency_ms","state_shm_transfer_count","state_shm_transfer_bytes"],
@@ -345,7 +346,8 @@ function render(){
   <aside class="rail"><div class="rail-title">Suites</div><div class="suite-list">${DATA.suites.map((x,i)=>suiteButton(x,i)).join("")}</div>
   <div class="legend"><span><i class="dot green"></i>Completed</span><span><i class="dot blue"></i>Selected</span><span><i class="dot amber"></i>Partial data</span><span><i class="dot"></i>Not generated</span></div></aside>
   <div class="content">
-   <section class="kpis">${kpi("Token saving",metric(s,"token_saving_rate"),"lower",true)}${kpi("Wire reduction",metric(s,"fair_wire_reduction_rate")??metric(s,"wire_bytes_reduction_rate"),"lower",true)}${kpi("Latency reduction",metric(s,"latency_reduction_rate"),"lower",true)}${kpi("Quality preservation",metric(s,"quality_preservation_rate"),"higher",true)}${kpi("Memory hit rate",metric(s,"memory_hit_rate"),"higher",true)}</section>
+   ${qualityEvidence(s)}
+   <section class="kpis">${kpi("Token saving",metric(s,"token_saving_rate"),"lower",true)}${kpi("Wire reduction",metric(s,"fair_wire_reduction_rate")??metric(s,"wire_bytes_reduction_rate"),"lower",true)}${kpi("Latency reduction",metric(s,"latency_reduction_rate"),"lower",true)}${kpi("Memory hit rate",metric(s,"memory_hit_rate"),"higher",true)}</section>
    <section class="section"><div class="section-head"><div><div class="section-title">Mode comparison summary</div><small>Selected: ${esc(suite.name)} · ${esc(suite.track||"legacy")}</small></div><div class="mode-key"><span><i class="key-box"></i>Text Mode</span><span><i class="key-box protocol"></i>Protocol Mode</span></div></div><div class="charts">${charts(suite)}</div></section>
    <section class="section"><div class="section-head"><div><div class="section-title">Task results</div><small id="task-count"></small></div><div class="toolbar"><input id="search" class="field search" placeholder="Search tasks…" aria-label="Search tasks"><select id="mode-filter" class="field"><option value="">All modes</option><option value="text">Text</option><option value="protocol">Protocol</option></select><button class="clear" id="clear">Clear filters</button></div></div><div class="table-wrap" id="table"></div></section>
    <section class="section"><div class="section-head"><div class="section-title">All metrics</div><small>${Object.keys(s).length} recorded fields</small></div><div class="metrics">${metrics(s)}</div></section>
@@ -357,6 +359,9 @@ function render(){
 function emptyPage(){return`<section class="section nosuites"><h2>No suites discovered</h2><p>No benchmark data is available yet. Run a benchmark and regenerate this report.</p><div class="kpi-value na">N/A</div><div class="kpi-note">Not recorded</div></section>`}
 function suiteButton(x,i){return`<button class="suite ${i===suiteIndex?"active":""}" data-suite="${i}"><span class="suite-name">${esc(x.name)} · ${esc(x.track||"legacy")}</span><span class="suite-status ${x.status}"><i class="dot"></i>${statusLabel(x.status)}</span><span class="suite-meta">${x.details.length||x.configured_task_count||0} result rows · ${x.source_count}/3 sources</span></button>`}
 function kpi(name,value,direction,isPct){return`<div class="kpi"><div class="kpi-label">${name}</div><div class="kpi-value ${value===null?"na":""}">${value===null?"N/A":isPct?pct(value):number(value)}</div><div class="kpi-note">${value===null?"Not recorded":direction==="higher"?"Higher is better":"Lower is better"}</div></div>`}
+function qualityEvidence(s){const tm=metric(s,"text_quality_mean"),tp=metric(s,"text_quality_pass_rate"),pm=metric(s,"protocol_quality_mean"),pp=metric(s,"protocol_quality_pass_rate");return`<section class="section"><div class="section-head"><div><div class="section-title">Quality evidence</div><small>Only task-defined, versioned rules are aggregated</small></div></div><div class="kpis">${evidenceKpi("Quality scored pairs",metric(s,"quality_scored_runs"),false)}${evidenceKpi("Unscored pairs",metric(s,"quality_unscored_runs"),false)}${evidenceKpi("Text quality mean / pass rate",scorePass(tm,tp),false)}${evidenceKpi("Protocol quality mean / pass rate",scorePass(pm,pp),false)}${evidenceKpi("Quality score delta",metric(s,"quality_score_delta"),true)}</div></section>`}
+function scorePass(score,passRate){return score===null||passRate===null?null:`${number(score)} / ${pct(passRate)}`}
+function evidenceKpi(name,value,isPct){const missing=value===null;const shown=missing?"N/A":typeof value==="string"?value:isPct?pct(value):number(value);return`<div class="kpi"><div class="kpi-label">${name}</div><div class="kpi-value ${missing?"na":""}">${shown}</div><div class="kpi-note">${missing?"Not recorded":"Task-defined evidence"}</div></div>`}
 function charts(suite){const s=suite.summary||{},defs=[
  ["Tokens",s.text_agent_io_tokens,s.protocol_agent_io_tokens,number],
  ["Agent I/O bytes",s.text_agent_io_bytes,s.protocol_agent_io_bytes,human],
@@ -381,13 +386,13 @@ function renderTable(){
  rows.sort((a,b)=>compare(valueFor(a,sortKey),valueFor(b,sortKey))*(sortAsc?1:-1));
  $("#task-count").textContent=`${rows.length} of ${suite.details.length} result rows`;
  if(!rows.length){$("#table").innerHTML=`<div class="empty"><strong>No benchmark data</strong>${suite.status==="not_generated"?"This suite has not been generated.":"No rows match the current filters."}</div>`;return}
- const cols=[["task_id","Task ID"],["group","Group"],["mode","Mode"],["agent_io_tokens","Tokens"],["agent_io_bytes","Agent I/O bytes"],["wire_bytes","Wire bytes"],["latency_ms","Latency"],["answer_quality_score","Quality"],["memory_query_hit_count","Memory hits"],["trace_id","Trace ID"]];
+ const cols=[["task_id","Task ID"],["group","Group"],["mode","Mode"],["quality_rule_id","Quality rule"],["quality_score","Quality score"],["quality_passed","Passed"],["agent_io_tokens","Tokens"],["agent_io_bytes","Agent I/O bytes"],["wire_bytes","Wire bytes"],["latency_ms","Latency"],["memory_query_hit_count","Memory hits"],["trace_id","Trace ID"]];
  $("#table").innerHTML=`<table class="results"><thead><tr>${cols.map(([k,n])=>`<th data-sort="${k}">${n}${sortKey===k?(sortAsc?" ↑":" ↓"):""}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(([k])=>cell(r,k)).join("")}</tr>`).join("")}</tbody></table>`;
  document.querySelectorAll("[data-sort]").forEach(h=>h.onclick=()=>{const k=h.dataset.sort;if(sortKey===k)sortAsc=!sortAsc;else{sortKey=k;sortAsc=true}renderTable()});
 }
-function valueFor(r,k){return k in r?r[k]:r.metrics?.[k]}
+function valueFor(r,k){if(k==="quality_rule_id")return r.quality?.rule_id;if(k==="quality_score")return r.quality?.score;if(k==="quality_passed")return r.quality?.scored?r.quality?.passed:null;return k in r?r[k]:r.metrics?.[k]}
 function compare(a,b){if(a==null)return 1;if(b==null)return-1;if(typeof a==="number"&&typeof b==="number")return a-b;return String(a).localeCompare(String(b))}
-function cell(r,k){const v=valueFor(r,k);let out=v==null?`<span class="na">N/A</span>`:esc(v);if(k.includes("bytes")&&finite(v))out=human(v);if(k==="latency_ms"&&finite(v))out=`${number(v)} ms`;if(k==="answer_quality_score"&&finite(v))out=number(v);return`<td class="${k==="mode"&&v==="protocol"?"mode-protocol":""}">${out}</td>`}
+function cell(r,k){const v=valueFor(r,k);let out=v==null?`<span class="na">N/A</span>`:esc(v);if(k.includes("bytes")&&finite(v))out=human(v);if(k==="latency_ms"&&finite(v))out=`${number(v)} ms`;if(k==="quality_score"&&finite(v))out=number(v);return`<td class="${k==="mode"&&v==="protocol"?"mode-protocol":""}">${out}</td>`}
 render();
 </script>
 </body>

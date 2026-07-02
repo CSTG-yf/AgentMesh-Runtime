@@ -377,10 +377,32 @@ def render_benchmark(console: Console, summary: BenchmarkSummary) -> None:
         if summary.memory_avg_semantic_similarity
         else "-",
     )
-    table.add_row(
-        "[bold]quality preservation rate（质量保持率）[/bold]",
-        "1.0000",
-        f"[bold]{summary.quality_preservation_rate:.4f}[/bold]",
+    _add_section(table, "Quality evidence")
+    _add_metric(table, "Quality scored pairs", summary.quality_scored_runs, "")
+    _add_metric(table, "Unscored pairs", summary.quality_unscored_runs, "")
+    _add_metric(
+        table,
+        "Text quality mean / pass rate",
+        _score_pass_text(
+            summary.text_quality_mean,
+            summary.text_quality_pass_rate,
+        ),
+        "",
+    )
+    _add_metric(
+        table,
+        "Protocol quality mean / pass rate",
+        "",
+        _score_pass_text(
+            summary.protocol_quality_mean,
+            summary.protocol_quality_pass_rate,
+        ),
+    )
+    _add_metric(
+        table,
+        "Quality score delta",
+        "",
+        _rate_text(summary.quality_score_delta),
     )
 
     _add_section(table, "系统完整性（评分权重 20%）")
@@ -569,8 +591,16 @@ def _clip(value: str, limit: int) -> str:
     return value[:limit].rstrip() + "\n... [truncated]"
 
 
-def _rate_text(value: float) -> str:
+def _rate_text(value: float | None) -> str:
+    if value is None:
+        return "N/A"
     return f"{value:.4f}"
+
+
+def _score_pass_text(score: float | None, pass_rate: float | None) -> str:
+    if score is None or pass_rate is None:
+        return "N/A"
+    return f"{score:.4f} / {pass_rate:.2%}"
 
 
 def _avg_reused_units_text(metrics: Any) -> str:

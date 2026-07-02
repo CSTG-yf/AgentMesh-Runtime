@@ -80,7 +80,21 @@ def generate_report(
         f"{summary.get('memory_avg_semantic_similarity', '0')}",
         "- MemoryAvgTagOverlapScore: "
         f"{summary.get('memory_avg_tag_overlap_score', '0')}",
-        f"- QualityPreservationRate: {summary.get('quality_preservation_rate', '0')}",
+        "",
+        "## Quality Evidence",
+        "",
+        f"- Quality scored pairs: {_summary_value(summary, 'quality_scored_runs')}",
+        f"- Unscored pairs: {_summary_value(summary, 'quality_unscored_runs')}",
+        "- Text quality mean / pass rate: "
+        f"{_summary_value(summary, 'text_quality_mean')} / "
+        f"{_summary_value(summary, 'text_quality_pass_rate')}",
+        "- Protocol quality mean / pass rate: "
+        f"{_summary_value(summary, 'protocol_quality_mean')} / "
+        f"{_summary_value(summary, 'protocol_quality_pass_rate')}",
+        f"- Quality score delta: {_summary_value(summary, 'quality_score_delta')}",
+        "",
+        "## Runtime Evidence",
+        "",
         f"- RustCoreEnabledRuns: {summary.get('rust_core_enabled_runs', '0')}",
         f"- RustSandboxBackendRuns: {summary.get('rust_sandbox_backend_runs', '0')}",
         f"- TransportSendCount: {summary.get('transport_send_count', '0')}",
@@ -145,6 +159,11 @@ def _summary_json_dict(summary: dict[str, str], key: str) -> dict[str, object]:
     except orjson.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _summary_value(summary: dict[str, str], key: str) -> str:
+    value = summary.get(key, "")
+    return value if value != "" else "N/A"
 
 
 def _latest_metrics(trace: list[dict[str, object]]) -> dict[str, object]:
