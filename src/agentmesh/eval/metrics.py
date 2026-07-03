@@ -56,6 +56,10 @@ class RunMetrics(BaseModel):
     planner_refine_count: int = 0
     retriever_refine_count: int = 0
     tool_feedback_count: int = 0
+    context_audits: list[dict[str, object]] = Field(default_factory=list)
+    context_original_chars: int = 0
+    context_retained_chars: int = 0
+    context_safe_fallback_count: int = 0
 
     @property
     def memory_hit_rate(self) -> float:

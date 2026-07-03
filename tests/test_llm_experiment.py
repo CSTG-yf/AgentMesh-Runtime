@@ -263,7 +263,7 @@ def test_profile_preflight_failure_preserves_prior_complete_manifest(
     assert manifest_path.read_bytes() == original
 
 
-def test_task1_profile_does_not_apply_candidate_optimization(tmp_path: Path) -> None:
+def test_candidate_profile_applies_context_optimization(tmp_path: Path) -> None:
     task = tmp_path / "task.txt"
     task.write_text("Summarize this task.", encoding="utf-8")
     baseline = run_protocol_mode(
@@ -290,7 +290,9 @@ def test_task1_profile_does_not_apply_candidate_optimization(tmp_path: Path) -> 
         ),
     )
     assert candidate.answer == baseline.answer
-    assert candidate.metrics.agent_io_tokens == baseline.metrics.agent_io_tokens
+    assert baseline.metrics.context_audits == []
+    assert candidate.metrics.context_audits
+    assert candidate.metrics.context_safe_fallback_count > 0
 
 
 def _write_suite(root: Path) -> Path:

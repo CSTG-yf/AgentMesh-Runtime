@@ -22,6 +22,7 @@ from agentmesh.protocol.codec import (
 from agentmesh.protocol.enums import MsgType
 from agentmesh.protocol.envelope import measure_typed_envelopes
 from agentmesh.protocol.schema import AMPMessage
+from agentmesh.runtime.context_budget import ContextAudit, ContextPart, pack_context
 from agentmesh.runtime.decision import PlannerDecision
 from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
@@ -88,12 +89,24 @@ def _run_protocol_mode_impl(
     trace_id: str | None = None,
     experiment_profile: LLMExperimentProfile | None = None,
 ) -> ModeRunResult:
-    del experiment_profile  # Task 1 records profiles but deliberately applies no optimization.
     paths.ensure()
     trace_id = trace_id or f"trace-{uuid4().hex[:12]}"
     task = task_path.read_text(encoding="utf-8-sig")
     start = time.perf_counter()
     stage_latency_ms: dict[str, int] = {}
+    context_audits: list[ContextAudit] = []
+    optimization_enabled = bool(
+        experiment_profile is not None and experiment_profile.optimization_enabled
+    )
+
+    def budget_context(
+        role: str,
+        max_chars: int,
+        parts: list[ContextPart],
+    ) -> str:
+        packed = pack_context(role=role, max_chars=max_chars, parts=parts)
+        context_audits.append(packed.audit)
+        return packed.text
 
     def mark_stage(name: str, stage_start: float) -> None:
         stage_latency_ms[name] = int((time.perf_counter() - stage_start) * 1000)
@@ -187,10 +200,19 @@ def _run_protocol_mode_impl(
     mark_stage("state_task_embedding", stage_start)
 
     stage_start = time.perf_counter()
+    planner_task = (
+        budget_context(
+            "planner",
+            experiment_profile.protocol.planner_max_chars,
+            [ContextPart(name="task", text=task, required=True)],
+        )
+        if optimization_enabled and experiment_profile is not None
+        else _compact_text(task, 300)
+    )
     planner_result = scheduler.invoke(
         source_agent="runtime",
         action="plan.create",
-        params={"task_chars": len(task), "task": _compact_text(task, 300)},
+        params={"task_chars": len(task), "task": planner_task},
         state_refs=[task_ref],
     )
     decision = _planner_decision(planner_result, task, context.capability_to_agent)
@@ -246,10 +268,26 @@ def _run_protocol_mode_impl(
         mark_stage("memory_search", stage_start)
 
         stage_start = time.perf_counter()
+        retriever_query = (
+            budget_context(
+                "retriever",
+                experiment_profile.protocol.retriever_max_chars,
+                [
+                    ContextPart(name="task", text=task, required=True),
+                    ContextPart(
+                        name="planner_intent",
+                        text=plan_summary,
+                        required=True,
+                    ),
+                ],
+            )
+            if optimization_enabled and experiment_profile is not None
+            else _compact_text(task, 300)
+        )
         retriever_result = scheduler.invoke(
             source_agent="planner",
             action="memory.semantic_search",
-            params={"query": _compact_text(task, 300), "task_chars": len(task)},
+            params={"query": retriever_query, "task_chars": len(task)},
             state_refs=[task_ref, plan_ref],
         )
         evidence = list(retriever_result.result["evidence"])
@@ -284,16 +322,34 @@ def _run_protocol_mode_impl(
 
     if decision.need_tool_execution:
         stage_start = time.perf_counter()
+        evidence_digest = _evidence_digest(
+            evidence,
+            snippet_limit=protocol_budget.evidence_snippet_max_chars,
+            max_items=3,
+        )
+        executor_task = (
+            budget_context(
+                "executor",
+                experiment_profile.protocol.executor_max_chars,
+                [
+                    ContextPart(name="task", text=task, required=True),
+                    ContextPart(
+                        name="execution_requirements",
+                        text="Execute and validate the task safely.",
+                        required=True,
+                    ),
+                    ContextPart(name="evidence_digest", text=evidence_digest),
+                ],
+            )
+            if optimization_enabled and experiment_profile is not None
+            else _compact_text(task, protocol_budget.agent_log_param_max_chars)
+        )
         executor_result = scheduler.invoke(
             source_agent="retriever" if evidence_ref else "planner",
             action="tool.run_python",
             params={
-                "task": _compact_text(task, protocol_budget.agent_log_param_max_chars),
-                "evidence": _evidence_digest(
-                    evidence,
-                    snippet_limit=protocol_budget.evidence_snippet_max_chars,
-                    max_items=3,
-                ),
+                "task": executor_task,
+                "evidence": "" if optimization_enabled else evidence_digest,
                 "evidence_count": len(evidence),
             },
             state_refs=[ref for ref in [task_ref, evidence_ref] if ref],
@@ -447,18 +503,36 @@ def _run_protocol_mode_impl(
         if ref
     ]
     summarizer_source = scheduler.selected_agents[-1] if scheduler.selected_agents else "planner"
+    summarizer_evidence = _evidence_digest(
+        evidence,
+        snippet_limit=protocol_budget.evidence_snippet_max_chars,
+        max_items=3,
+    )
+    summarizer_task = (
+        budget_context(
+            "summarizer",
+            experiment_profile.protocol.summarizer_max_chars,
+            [
+                ContextPart(name="task", text=task, required=True),
+                ContextPart(
+                    name="execution_result",
+                    text=code_result_summary or "No tool execution result.",
+                    required=True,
+                ),
+                ContextPart(name="evidence_digest", text=summarizer_evidence),
+            ],
+        )
+        if optimization_enabled and experiment_profile is not None
+        else _compact_text(task, 500)
+    )
     summarizer_result = scheduler.invoke(
         source_agent=summarizer_source,
         action="summary.create",
         params={
-            "task": _compact_text(task, 500),
-            "evidence_digest": _evidence_digest(
-                evidence,
-                snippet_limit=protocol_budget.evidence_snippet_max_chars,
-                max_items=3,
-            ),
+            "task": summarizer_task,
+            "evidence_digest": "" if optimization_enabled else summarizer_evidence,
             "evidence_count": len(evidence),
-            "code_result": code_result_summary,
+            "code_result": "" if optimization_enabled else code_result_summary,
             "tool_feedback": tool_feedback or {},
             "dynamic_route": scheduler.selected_agents,
         },
@@ -607,6 +681,12 @@ def _run_protocol_mode_impl(
         planner_refine_count=planner_refine_count,
         retriever_refine_count=retriever_refine_count,
         tool_feedback_count=tool_feedback_count,
+        context_audits=[audit.model_dump() for audit in context_audits],
+        context_original_chars=sum(audit.original_chars for audit in context_audits),
+        context_retained_chars=sum(audit.retained_chars for audit in context_audits),
+        context_safe_fallback_count=sum(
+            1 for audit in context_audits if audit.safe_fallback
+        ),
     )
     append_jsonl(paths.protocol_trace, {"trace_id": trace_id, "metrics": metrics.model_dump()})
     state_store.close()
