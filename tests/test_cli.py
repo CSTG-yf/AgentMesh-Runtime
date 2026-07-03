@@ -21,3 +21,21 @@ def test_config_masks_api_key(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert secret not in result.stdout
     assert '"api_key": "configured"' in result.stdout
+
+
+def test_profile_cannot_be_combined_with_no_llm(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "benchmark",
+            "--suite",
+            "standard",
+            "--root",
+            str(tmp_path),
+            "--profile",
+            "profile.yaml",
+            "--no-llm",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--profile cannot be combined with --no-llm" in result.stdout

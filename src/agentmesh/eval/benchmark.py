@@ -149,12 +149,34 @@ def run_benchmark(
     progress_callback: Callable[[BenchmarkProgressEvent], None] | None = None,
     profile: LLMExperimentProfile | None = None,
 ) -> BenchmarkSummary:
+    previous_global_memory_setting = os.environ.get(
+        "AGENTMESH_DISABLE_GLOBAL_MEMORY"
+    )
+    os.environ["AGENTMESH_DISABLE_GLOBAL_MEMORY"] = "1"
+    try:
+        return _run_benchmark_impl(
+            suite_path,
+            paths,
+            use_llm=use_llm,
+            progress_callback=progress_callback,
+            profile=profile,
+        )
+    finally:
+        _restore_global_memory_setting(previous_global_memory_setting)
+
+
+def _run_benchmark_impl(
+    suite_path: Path,
+    paths: RuntimePaths,
+    *,
+    use_llm: bool = True,
+    progress_callback: Callable[[BenchmarkProgressEvent], None] | None = None,
+    profile: LLMExperimentProfile | None = None,
+) -> BenchmarkSummary:
     suite = _load_suite(suite_path)
     _reset_runtime_working_dirs(paths)
     paths.ensure()
     _reset_run_memory(paths)
-    previous_global_memory_setting = os.environ.get("AGENTMESH_DISABLE_GLOBAL_MEMORY")
-    os.environ["AGENTMESH_DISABLE_GLOBAL_MEMORY"] = "1"
     repeat = profile.repeat if profile is not None else int(suite.get("repeat", 1))
     tasks = suite.get("tasks")
     if not isinstance(tasks, list) or not tasks:
@@ -555,7 +577,6 @@ def run_benchmark(
             use_llm=use_llm,
         ),
     )
-    _restore_global_memory_setting(previous_global_memory_setting)
     return summary
 
 
