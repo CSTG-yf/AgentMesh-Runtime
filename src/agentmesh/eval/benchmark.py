@@ -154,13 +154,22 @@ def run_benchmark(
     )
     os.environ["AGENTMESH_DISABLE_GLOBAL_MEMORY"] = "1"
     try:
-        return _run_benchmark_impl(
-            suite_path,
-            paths,
-            use_llm=use_llm,
-            progress_callback=progress_callback,
-            profile=profile,
-        )
+        try:
+            return _run_benchmark_impl(
+                suite_path,
+                paths,
+                use_llm=use_llm,
+                progress_callback=progress_callback,
+                profile=profile,
+            )
+        except Exception:
+            _mark_manifest_failed(
+                suite_path=suite_path,
+                paths=paths,
+                use_llm=use_llm,
+                profile=profile,
+            )
+            raise
     finally:
         _restore_global_memory_setting(previous_global_memory_setting)
 
@@ -210,7 +219,7 @@ def _run_benchmark_impl(
         ),
         prompt_tree_sha256=prompt_tree_sha256(prompt_dir),
         quality_rules_sha256=quality_rules_hash,
-    )
+    ).model_copy(update={"expected_pairs": repeat * len(tasks)})
     variant = profile.artifact_label if profile else None
     detail_path = paths.benchmark_suite_detail(suite_name, track.value, variant)
     summary_path = paths.benchmark_suite_summary(suite_name, track.value, variant)
@@ -466,6 +475,10 @@ def _run_benchmark_impl(
                     detail_path,
                     detail_record.model_dump(mode="json"),
                 )
+            manifest = manifest.model_copy(
+                update={"completed_pairs": manifest.completed_pairs + 1}
+            )
+            _write_manifest(manifest_path, manifest)
 
     summary = BenchmarkSummary(
         experiment_id=manifest.experiment_id,
@@ -577,7 +590,46 @@ def _run_benchmark_impl(
             use_llm=use_llm,
         ),
     )
+    manifest = manifest.model_copy(
+        update={
+            "status": "complete",
+            "completed_pairs": manifest.expected_pairs,
+            "failure_reason": "",
+        }
+    )
+    _write_manifest(manifest_path, manifest)
     return summary
+
+
+def _mark_manifest_failed(
+    *,
+    suite_path: Path,
+    paths: RuntimePaths,
+    use_llm: bool,
+    profile: LLMExperimentProfile | None,
+) -> None:
+    try:
+        suite = _load_suite(suite_path)
+        suite_name = str(suite.get("name", suite_path.stem))
+        track = BenchmarkTrack.LLM if use_llm else BenchmarkTrack.DETERMINISTIC
+        variant = profile.artifact_label if profile else None
+        manifest_path = paths.benchmark_suite_manifest(
+            suite_name, track.value, variant
+        )
+        if not manifest_path.exists():
+            return
+        manifest = ExperimentManifest.model_validate(
+            orjson.loads(manifest_path.read_bytes())
+        )
+        reason = "llm_provider_error" if profile is not None else "benchmark_error"
+        _write_manifest(
+            manifest_path,
+            manifest.model_copy(
+                update={"status": "failed", "failure_reason": reason}
+            ),
+        )
+    except Exception:
+        return
 
 
 def _emit_progress(

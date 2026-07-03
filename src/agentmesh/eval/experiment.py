@@ -5,7 +5,7 @@ import platform
 import sys
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -38,6 +38,10 @@ class ExperimentManifest(BaseModel):
     model_fingerprint: str = ""
     prompt_tree_sha256: str = ""
     quality_rules_sha256: str = ""
+    status: Literal["in_progress", "failed", "complete"] = "in_progress"
+    completed_pairs: int = 0
+    expected_pairs: int = 0
+    failure_reason: str = ""
 
 
 def build_experiment_manifest(

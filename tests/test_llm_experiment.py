@@ -39,6 +39,12 @@ protocol: {}
     assert len(profile.sha256) == 64
 
 
+@pytest.mark.parametrize("artifact_label", ["a/b", "", " leading", "two words", "a\\b"])
+def test_profile_rejects_noncanonical_artifact_label(artifact_label: str) -> None:
+    with pytest.raises(ValidationError):
+        LLMExperimentProfile(profile_id="profile", artifact_label=artifact_label)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("planner_max_chars", 0), ("evidence_min_score", 1.1)],
@@ -151,6 +157,10 @@ def test_profile_repeat_forwarding_summary_and_failure_abort(
         .read_bytes()
     )
     assert manifest["repeat_count"] == 2
+    assert manifest["status"] == "failed"
+    assert manifest["completed_pairs"] == 1
+    assert manifest["expected_pairs"] == 2
+    assert manifest["failure_reason"] == "llm_provider_error"
 
 
 def test_profile_success_summary_has_variant_and_quality_hash(
@@ -183,6 +193,15 @@ def test_profile_success_summary_has_variant_and_quality_hash(
     assert summary.repeat_count == 1
     assert summary.artifact_variant == "variant"
     assert len(summary.quality_rules_sha256) == 64
+    manifest = orjson.loads(
+        RuntimePaths(root=tmp_path)
+        .benchmark_suite_manifest("profile_suite", "llm", "variant")
+        .read_bytes()
+    )
+    assert manifest["status"] == "complete"
+    assert manifest["completed_pairs"] == 1
+    assert manifest["expected_pairs"] == 1
+    assert manifest["failure_reason"] == ""
 
 
 def test_profile_requires_complete_llm_config_before_modes(

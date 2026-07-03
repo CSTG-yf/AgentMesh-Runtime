@@ -24,7 +24,7 @@ class LLMExperimentProfile(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     profile_id: str
-    artifact_label: str
+    artifact_label: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     repeat: int = Field(default=3, gt=0)
     prompt_version: str = "p2"
     route_policy_version: Literal["legacy", "quality_safe_v1"] = "legacy"
