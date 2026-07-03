@@ -225,6 +225,44 @@ def test_profile_requires_complete_llm_config_before_modes(
     assert called is False
 
 
+def test_profile_preflight_failure_preserves_prior_complete_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    suite = _write_suite(tmp_path)
+    _write_llm_env(tmp_path)
+    profile = LLMExperimentProfile(
+        profile_id="profile", artifact_label="variant", repeat=1
+    )
+
+    def result(mode: str) -> ModeRunResult:
+        return ModeRunResult(
+            mode=mode,
+            trace_id=mode,
+            answer="ok",
+            metrics=RunMetrics(llm_call_count=1),
+        )
+
+    monkeypatch.setattr(
+        "agentmesh.eval.benchmark.run_text_mode", lambda **_: result("text")
+    )
+    monkeypatch.setattr(
+        "agentmesh.eval.benchmark.run_protocol_mode",
+        lambda **_: result("protocol"),
+    )
+    paths = RuntimePaths(root=tmp_path)
+    run_benchmark(suite, paths, profile=profile)
+    manifest_path = paths.benchmark_suite_manifest(
+        "profile_suite", "llm", "variant"
+    )
+    original = manifest_path.read_bytes()
+    (tmp_path / ".env").unlink()
+
+    with pytest.raises(BenchmarkConfigError, match="requires base_url"):
+        run_benchmark(suite, paths, profile=profile)
+
+    assert manifest_path.read_bytes() == original
+
+
 def test_task1_profile_does_not_apply_candidate_optimization(tmp_path: Path) -> None:
     task = tmp_path / "task.txt"
     task.write_text("Summarize this task.", encoding="utf-8")

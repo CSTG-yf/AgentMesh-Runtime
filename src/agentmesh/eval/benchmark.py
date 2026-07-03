@@ -149,6 +149,7 @@ def run_benchmark(
     progress_callback: Callable[[BenchmarkProgressEvent], None] | None = None,
     profile: LLMExperimentProfile | None = None,
 ) -> BenchmarkSummary:
+    manifest_ownership: list[tuple[Path, str]] = []
     previous_global_memory_setting = os.environ.get(
         "AGENTMESH_DISABLE_GLOBAL_MEMORY"
     )
@@ -161,12 +162,11 @@ def run_benchmark(
                 use_llm=use_llm,
                 progress_callback=progress_callback,
                 profile=profile,
+                manifest_ownership=manifest_ownership,
             )
         except Exception:
             _mark_manifest_failed(
-                suite_path=suite_path,
-                paths=paths,
-                use_llm=use_llm,
+                manifest_ownership=manifest_ownership,
                 profile=profile,
             )
             raise
@@ -181,6 +181,7 @@ def _run_benchmark_impl(
     use_llm: bool = True,
     progress_callback: Callable[[BenchmarkProgressEvent], None] | None = None,
     profile: LLMExperimentProfile | None = None,
+    manifest_ownership: list[tuple[Path, str]],
 ) -> BenchmarkSummary:
     suite = _load_suite(suite_path)
     _reset_runtime_working_dirs(paths)
@@ -227,6 +228,7 @@ def _run_benchmark_impl(
     manifest_path = paths.benchmark_suite_manifest(suite_name, track.value, variant)
     _reset_suite_artifacts(summary_path, detail_path, report_path, manifest_path)
     _write_manifest(manifest_path, manifest)
+    manifest_ownership.append((manifest_path, manifest.experiment_id))
     total_tasks = repeat * len(tasks)
     total_stages = total_tasks * 2
     _emit_progress(
@@ -603,24 +605,18 @@ def _run_benchmark_impl(
 
 def _mark_manifest_failed(
     *,
-    suite_path: Path,
-    paths: RuntimePaths,
-    use_llm: bool,
+    manifest_ownership: list[tuple[Path, str]],
     profile: LLMExperimentProfile | None,
 ) -> None:
     try:
-        suite = _load_suite(suite_path)
-        suite_name = str(suite.get("name", suite_path.stem))
-        track = BenchmarkTrack.LLM if use_llm else BenchmarkTrack.DETERMINISTIC
-        variant = profile.artifact_label if profile else None
-        manifest_path = paths.benchmark_suite_manifest(
-            suite_name, track.value, variant
-        )
-        if not manifest_path.exists():
+        if not manifest_ownership:
             return
+        manifest_path, experiment_id = manifest_ownership[0]
         manifest = ExperimentManifest.model_validate(
             orjson.loads(manifest_path.read_bytes())
         )
+        if manifest.experiment_id != experiment_id:
+            return
         reason = "llm_provider_error" if profile is not None else "benchmark_error"
         _write_manifest(
             manifest_path,
