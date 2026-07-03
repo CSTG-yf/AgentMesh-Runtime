@@ -7,7 +7,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-import orjson
 from pydantic import BaseModel, ConfigDict
 
 BENCHMARK_SCHEMA_VERSION = "2.0"
@@ -61,7 +60,8 @@ def build_experiment_manifest(
     safe_environment = {
         str(key): str(value)
         for key, value in sorted((environment or {}).items())
-        if key.lower() not in _SECRET_KEYS and value is not None
+        if not any(secret_key in str(key).lower() for secret_key in _SECRET_KEYS)
+        and value is not None
     }
     identity = "|".join(
         [
@@ -101,12 +101,10 @@ def build_experiment_manifest(
     )
 
 
-def model_fingerprint(base_url: str | None, model: str | None) -> str:
-    canonical = orjson.dumps(
-        {"base_url": base_url or "", "model": model or ""},
-        option=orjson.OPT_SORT_KEYS,
-    )
-    return hashlib.sha256(canonical).hexdigest()
+def model_fingerprint(base_url: str, model: str) -> str:
+    return hashlib.sha256(
+        f"{base_url.rstrip('/')}|{model}".encode()
+    ).hexdigest()[:16]
 
 
 def prompt_tree_sha256(prompt_dir: Path) -> str:

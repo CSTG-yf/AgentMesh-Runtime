@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from agentmesh.eval.experiment import (
@@ -23,7 +24,16 @@ def test_manifest_is_stable_and_does_not_contain_secrets(tmp_path: Path) -> None
         track=BenchmarkTrack.DETERMINISTIC,
         repeat_count=2,
         seed=17,
-        environment={"model": "demo", "api_key": "secret"},
+        environment={
+            "model": "demo",
+            "api_key": "secret",
+            "LLM_API_KEY": "secret",
+            "access_token": "secret",
+            "client_secret_value": "secret",
+            "database_password_file": "secret",
+            "Authorization_Header": "secret",
+            "ordinary_key": "visible",
+        },
     )
     second = build_experiment_manifest(
         suite_path=suite,
@@ -36,8 +46,20 @@ def test_manifest_is_stable_and_does_not_contain_secrets(tmp_path: Path) -> None
 
     assert first.schema_version == BENCHMARK_SCHEMA_VERSION
     assert first.experiment_id == second.experiment_id
-    assert first.environment == {"model": "demo"}
+    assert first.environment == {"model": "demo", "ordinary_key": "visible"}
     assert "secret" not in first.model_dump_json()
+
+
+def test_model_fingerprint_uses_canonical_url_and_model() -> None:
+    base_url = "https://example.test/v1"
+    model = "test-model"
+    expected = hashlib.sha256(f"{base_url}|{model}".encode()).hexdigest()[:16]
+
+    fingerprint = model_fingerprint(f"{base_url}/", model)
+
+    assert fingerprint == expected
+    assert fingerprint == model_fingerprint(base_url, model)
+    assert len(fingerprint) == 16
 
 
 def test_paired_mode_order_is_deterministic_and_balanced() -> None:

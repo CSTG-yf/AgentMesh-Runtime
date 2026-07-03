@@ -141,9 +141,9 @@ def config(
     _print_json(
         {
             "llm_configured": runtime_config.llm.configured,
-            "base_url": runtime_config.llm.base_url,
-            "model": runtime_config.llm.model,
-            "api_key": "configured" if runtime_config.llm.api_key else "missing",
+            "llm_base_url": runtime_config.llm.base_url or "",
+            "llm_model": runtime_config.llm.model or "",
+            "llm_api_key": "configured" if runtime_config.llm.api_key else "missing",
         }
     )
 

@@ -206,7 +206,7 @@ def _run_benchmark_impl(
         prompt_version=profile.prompt_version if profile else "",
         route_policy_version=profile.route_policy_version if profile else "",
         model_fingerprint=model_fingerprint(
-            runtime_config.llm.base_url, runtime_config.llm.model
+            runtime_config.llm.base_url or "", runtime_config.llm.model or ""
         ),
         prompt_tree_sha256=prompt_tree_sha256(prompt_dir),
         quality_rules_sha256=quality_rules_hash,
