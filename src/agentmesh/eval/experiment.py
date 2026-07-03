@@ -7,6 +7,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+import orjson
 from pydantic import BaseModel, ConfigDict
 
 BENCHMARK_SCHEMA_VERSION = "2.0"
@@ -31,6 +32,13 @@ class ExperimentManifest(BaseModel):
     python_version: str
     platform: str
     environment: dict[str, str]
+    profile_id: str = ""
+    profile_sha256: str = ""
+    prompt_version: str = ""
+    route_policy_version: str = ""
+    model_fingerprint: str = ""
+    prompt_tree_sha256: str = ""
+    quality_rules_sha256: str = ""
 
 
 def build_experiment_manifest(
@@ -41,6 +49,13 @@ def build_experiment_manifest(
     repeat_count: int,
     seed: int,
     environment: dict[str, Any] | None = None,
+    profile_id: str = "",
+    profile_sha256: str = "",
+    prompt_version: str = "",
+    route_policy_version: str = "",
+    model_fingerprint: str = "",
+    prompt_tree_sha256: str = "",
+    quality_rules_sha256: str = "",
 ) -> ExperimentManifest:
     suite_sha256 = hashlib.sha256(suite_path.read_bytes()).hexdigest()
     safe_environment = {
@@ -56,6 +71,13 @@ def build_experiment_manifest(
             track.value,
             str(repeat_count),
             str(seed),
+            profile_id,
+            profile_sha256,
+            prompt_version,
+            route_policy_version,
+            model_fingerprint,
+            prompt_tree_sha256,
+            quality_rules_sha256,
         ]
     )
     experiment_id = f"exp-{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
@@ -69,7 +91,33 @@ def build_experiment_manifest(
         python_version=sys.version.split()[0],
         platform=platform.platform(),
         environment=safe_environment,
+        profile_id=profile_id,
+        profile_sha256=profile_sha256,
+        prompt_version=prompt_version,
+        route_policy_version=route_policy_version,
+        model_fingerprint=model_fingerprint,
+        prompt_tree_sha256=prompt_tree_sha256,
+        quality_rules_sha256=quality_rules_sha256,
     )
+
+
+def model_fingerprint(base_url: str | None, model: str | None) -> str:
+    canonical = orjson.dumps(
+        {"base_url": base_url or "", "model": model or ""},
+        option=orjson.OPT_SORT_KEYS,
+    )
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def prompt_tree_sha256(prompt_dir: Path) -> str:
+    digest = hashlib.sha256()
+    if prompt_dir.exists():
+        for path in sorted(item for item in prompt_dir.rglob("*") if item.is_file()):
+            digest.update(path.relative_to(prompt_dir).as_posix().encode())
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def paired_mode_order(*, seed: int, pair_index: int) -> tuple[str, str]:

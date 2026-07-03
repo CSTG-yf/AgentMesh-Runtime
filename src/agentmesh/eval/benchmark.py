@@ -19,8 +19,11 @@ from agentmesh.eval.experiment import (
     BenchmarkTrack,
     ExperimentManifest,
     build_experiment_manifest,
+    model_fingerprint,
     paired_mode_order,
+    prompt_tree_sha256,
 )
+from agentmesh.eval.llm_experiment import LLMExperimentProfile
 from agentmesh.eval.metrics import TOKEN_ESTIMATOR, ModeRunResult, RunMetrics
 from agentmesh.eval.quality_spec import QualityResult, QualitySpec, evaluate_quality
 from agentmesh.eval.statistics import DistributionStats, distribution_stats
@@ -37,6 +40,8 @@ class BenchmarkSummary(BaseModel):
     repeat_count: int
     seed: int
     suite_name: str
+    artifact_variant: str = ""
+    quality_rules_sha256: str = ""
     total_runs: int
     token_estimator: str
     token_saving_rate: float
@@ -142,6 +147,7 @@ def run_benchmark(
     *,
     use_llm: bool = True,
     progress_callback: Callable[[BenchmarkProgressEvent], None] | None = None,
+    profile: LLMExperimentProfile | None = None,
 ) -> BenchmarkSummary:
     suite = _load_suite(suite_path)
     _reset_runtime_working_dirs(paths)
@@ -149,7 +155,7 @@ def run_benchmark(
     _reset_run_memory(paths)
     previous_global_memory_setting = os.environ.get("AGENTMESH_DISABLE_GLOBAL_MEMORY")
     os.environ["AGENTMESH_DISABLE_GLOBAL_MEMORY"] = "1"
-    repeat = int(suite.get("repeat", 1))
+    repeat = profile.repeat if profile is not None else int(suite.get("repeat", 1))
     tasks = suite.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         raise BenchmarkConfigError("Benchmark suite requires tasks")
@@ -157,6 +163,12 @@ def run_benchmark(
     track = BenchmarkTrack.LLM if use_llm else BenchmarkTrack.DETERMINISTIC
     seed = int(suite.get("seed", 0))
     runtime_config = AgentMeshConfig.from_project_root(paths.root)
+    if profile is not None and use_llm and not runtime_config.llm.configured:
+        raise BenchmarkConfigError(
+            "LLM experiment profile requires base_url, api_key, and model"
+        )
+    quality_rules_hash = _quality_rules_sha256(tasks)
+    prompt_dir = runtime_config.prompt_dir or paths.root / "prompts"
     manifest = build_experiment_manifest(
         suite_path=suite_path,
         suite_name=suite_name,
@@ -167,11 +179,21 @@ def run_benchmark(
             "model": runtime_config.llm.model or "",
             "rust_core": str(rust_available()),
         },
+        profile_id=profile.profile_id if profile else "",
+        profile_sha256=profile.sha256 if profile else "",
+        prompt_version=profile.prompt_version if profile else "",
+        route_policy_version=profile.route_policy_version if profile else "",
+        model_fingerprint=model_fingerprint(
+            runtime_config.llm.base_url, runtime_config.llm.model
+        ),
+        prompt_tree_sha256=prompt_tree_sha256(prompt_dir),
+        quality_rules_sha256=quality_rules_hash,
     )
-    detail_path = paths.benchmark_suite_detail(suite_name, track=track.value)
-    summary_path = paths.benchmark_suite_summary(suite_name, track=track.value)
-    report_path = paths.benchmark_suite_report(suite_name, track=track.value)
-    manifest_path = paths.benchmark_suite_manifest(suite_name, track=track.value)
+    variant = profile.artifact_label if profile else None
+    detail_path = paths.benchmark_suite_detail(suite_name, track.value, variant)
+    summary_path = paths.benchmark_suite_summary(suite_name, track.value, variant)
+    report_path = paths.benchmark_suite_report(suite_name, track.value, variant)
+    manifest_path = paths.benchmark_suite_manifest(suite_name, track.value, variant)
     _reset_suite_artifacts(summary_path, detail_path, report_path, manifest_path)
     _write_manifest(manifest_path, manifest)
     total_tasks = repeat * len(tasks)
@@ -272,19 +294,25 @@ def run_benchmark(
             pair_order = paired_mode_order(seed=seed, pair_index=pair_index)
             results: dict[str, ModeRunResult] = {}
             for stage_offset, mode in enumerate(pair_order, start=1):
-                result = (
-                    run_text_mode(
+                if mode == "text":
+                    result = run_text_mode(
                         task_path=input_file,
                         paths=paths,
                         load_configured_llm=use_llm,
                     )
-                    if mode == "text"
-                    else run_protocol_mode(
+                elif profile is None:
+                    result = run_protocol_mode(
                         task_path=input_file,
                         paths=paths,
                         load_configured_llm=use_llm,
                     )
-                )
+                else:
+                    result = run_protocol_mode(
+                        task_path=input_file,
+                        paths=paths,
+                        load_configured_llm=use_llm,
+                        experiment_profile=profile,
+                    )
                 results[mode] = result
                 _emit_progress(
                     progress_callback,
@@ -303,6 +331,13 @@ def run_benchmark(
                 )
             text_result = results["text"]
             protocol_result = results["protocol"]
+            if profile is not None and (
+                text_result.metrics.llm_error_count
+                or protocol_result.metrics.llm_error_count
+            ):
+                raise BenchmarkConfigError(
+                    f"LLM provider failure for task {task.get('id', '')}"
+                )
             quality_results = {
                 "text": evaluate_quality(text_result.answer, quality_spec),
                 "protocol": evaluate_quality(protocol_result.answer, quality_spec),
@@ -416,6 +451,8 @@ def run_benchmark(
         repeat_count=repeat,
         seed=seed,
         suite_name=suite_name,
+        artifact_variant=variant or "",
+        quality_rules_sha256=quality_rules_hash,
         total_runs=logical_runs,
         token_estimator=TOKEN_ESTIMATOR,
         token_saving_rate=_rate(text_tokens, protocol_tokens),
@@ -705,3 +742,17 @@ def _write_manifest(path: Path, manifest: ExperimentManifest) -> None:
             option=orjson.OPT_INDENT_2,
         )
     )
+
+
+def _quality_rules_sha256(tasks: list[object]) -> str:
+    rules: list[dict[str, object]] = []
+    for task in tasks:
+        if isinstance(task, dict):
+            rules.append(
+                {
+                    "task_id": str(task.get("id", "")),
+                    "quality": task.get("quality"),
+                }
+            )
+    canonical = orjson.dumps(rules, option=orjson.OPT_SORT_KEYS)
+    return hashlib.sha256(canonical).hexdigest()

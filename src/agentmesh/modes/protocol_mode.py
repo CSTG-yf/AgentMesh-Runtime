@@ -8,8 +8,9 @@ import orjson
 
 from agentmesh.core import rust_available
 from agentmesh.errors import SandboxTimeoutError
+from agentmesh.eval.llm_experiment import LLMExperimentProfile
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
-from agentmesh.llm.client import LLMClient
+from agentmesh.llm.client import InstrumentedLLMClient, LLMClient
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.tagger import LLMMemoryTagger
@@ -38,6 +39,7 @@ def run_protocol_mode(
     llm_client: LLMClient | None = None,
     load_configured_llm: bool = True,
     trace_id: str | None = None,
+    experiment_profile: LLMExperimentProfile | None = None,
 ) -> ModeRunResult:
     return ProtocolRunSession(
         task_path=task_path,
@@ -45,6 +47,7 @@ def run_protocol_mode(
         llm_client=llm_client,
         load_configured_llm=load_configured_llm,
         trace_id=trace_id,
+        experiment_profile=experiment_profile,
     ).run()
 
 
@@ -57,12 +60,14 @@ class ProtocolRunSession:
         llm_client: LLMClient | None,
         load_configured_llm: bool,
         trace_id: str | None,
+        experiment_profile: LLMExperimentProfile | None = None,
     ) -> None:
         self.task_path = task_path
         self.paths = paths
         self.llm_client = llm_client
         self.load_configured_llm = load_configured_llm
         self.trace_id = trace_id
+        self.experiment_profile = experiment_profile
 
     def run(self) -> ModeRunResult:
         return _run_protocol_mode_impl(
@@ -71,6 +76,7 @@ class ProtocolRunSession:
             llm_client=self.llm_client,
             load_configured_llm=self.load_configured_llm,
             trace_id=self.trace_id,
+            experiment_profile=self.experiment_profile,
         )
 
 
@@ -80,7 +86,9 @@ def _run_protocol_mode_impl(
     llm_client: LLMClient | None = None,
     load_configured_llm: bool = True,
     trace_id: str | None = None,
+    experiment_profile: LLMExperimentProfile | None = None,
 ) -> ModeRunResult:
+    del experiment_profile  # Task 1 records profiles but deliberately applies no optimization.
     paths.ensure()
     trace_id = trace_id or f"trace-{uuid4().hex[:12]}"
     task = task_path.read_text(encoding="utf-8-sig")
@@ -98,6 +106,13 @@ def _run_protocol_mode_impl(
         llm_client=llm_client,
         load_configured_llm=load_configured_llm,
     )
+    instrumented = (
+        InstrumentedLLMClient(context.llm_client)
+        if context.llm_client is not None
+        else None
+    )
+    if instrumented is not None:
+        context = context.model_copy(update={"llm_client": instrumented})
     protocol_budget = context.config.protocol
     state_store = StateStore(
         paths,
@@ -541,6 +556,8 @@ def _run_protocol_mode_impl(
     mark_stage("artifact_write", stage_start)
     latency_ms = int((time.perf_counter() - start) * 1000)
     metrics = RunMetrics(
+        llm_call_count=instrumented.stats.call_count if instrumented else 0,
+        llm_error_count=instrumented.stats.error_count if instrumented else 0,
         message_count=len(messages),
         text_chars=len(task),
         estimated_tokens=agent_io_tokens or estimate_tokens(task),

@@ -1,0 +1,13 @@
+profile_id: p3-baseline-v1
+artifact_label: p3-baseline
+repeat: 3
+prompt_version: p2
+route_policy_version: legacy
+optimization_enabled: false
+protocol:
+  planner_max_chars: 1200
+  retriever_max_chars: 1600
+  executor_max_chars: 2400
+  summarizer_max_chars: 2400
+  evidence_max_items: 3
+  evidence_min_score: 0

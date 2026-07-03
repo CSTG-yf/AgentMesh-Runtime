@@ -25,6 +25,35 @@ class LLMClient(Protocol):
         raise NotImplementedError
 
 
+class LLMCallStats(BaseModel):
+    call_count: int = 0
+    error_count: int = 0
+
+
+class InstrumentedLLMClient:
+    def __init__(self, client: LLMClient) -> None:
+        self._client = client
+        self.stats = LLMCallStats()
+
+    def complete(
+        self,
+        *,
+        agent_name: str,
+        messages: list[ChatMessage],
+        variables: dict[str, object] | None = None,
+    ) -> str:
+        self.stats.call_count += 1
+        try:
+            return self._client.complete(
+                agent_name=agent_name,
+                messages=messages,
+                variables=variables,
+            )
+        except Exception:
+            self.stats.error_count += 1
+            raise
+
+
 Transport = Callable[[str, dict[str, str], dict[str, object], float], dict[str, object]]
 
 

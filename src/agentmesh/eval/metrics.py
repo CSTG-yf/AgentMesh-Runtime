@@ -4,6 +4,8 @@ TOKEN_ESTIMATOR = "mixed_cjk"
 
 
 class RunMetrics(BaseModel):
+    llm_call_count: int = 0
+    llm_error_count: int = 0
     message_count: int = 0
     text_chars: int = 0
     estimated_tokens: int = 0

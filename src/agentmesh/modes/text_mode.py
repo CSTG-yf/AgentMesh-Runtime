@@ -4,7 +4,12 @@ from typing import cast
 from uuid import uuid4
 
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
-from agentmesh.llm.client import ChatMessage, LLMClient, create_llm_client
+from agentmesh.llm.client import (
+    ChatMessage,
+    InstrumentedLLMClient,
+    LLMClient,
+    create_llm_client,
+)
 from agentmesh.runtime.decision import PlannerDecision
 from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
@@ -38,6 +43,13 @@ def run_text_mode(
         runtime_context = runtime_context.model_copy(
             update={"llm_client": _create_text_mode_llm_client(runtime_context)}
         )
+    instrumented = (
+        InstrumentedLLMClient(runtime_context.llm_client)
+        if runtime_context.llm_client is not None
+        else None
+    )
+    if instrumented is not None:
+        runtime_context = runtime_context.model_copy(update={"llm_client": instrumented})
     start = time.perf_counter()
     context = task
     final_response = ""
@@ -92,6 +104,8 @@ def run_text_mode(
         answer = "Text Mode answer: " + context.splitlines()[-1]
     latency_ms = int((time.perf_counter() - start) * 1000)
     metrics = RunMetrics(
+        llm_call_count=instrumented.stats.call_count if instrumented else 0,
+        llm_error_count=instrumented.stats.error_count if instrumented else 0,
         message_count=len(agents),
         text_chars=sum(len(item) for item in [task, context]),
         estimated_tokens=estimate_tokens(task) + estimate_tokens(context),

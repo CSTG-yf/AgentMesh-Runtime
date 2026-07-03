@@ -97,9 +97,15 @@ class RuntimePaths(BaseModel):
     def benchmark_dir(self) -> Path:
         return self.latest_run / "benchmarks"
 
-    def benchmark_suite_dir(self, suite_name: str, track: str | None = None) -> Path:
+    def benchmark_suite_dir(
+        self,
+        suite_name: str,
+        track: str | None = None,
+        variant: str | None = None,
+    ) -> Path:
         suite_dir = self.benchmark_dir / _slugify_path_name(suite_name)
-        return suite_dir / _slugify_path_name(track) if track else suite_dir
+        track_dir = suite_dir / _slugify_path_name(track) if track else suite_dir
+        return track_dir / _slugify_path_name(variant) if variant else track_dir
 
     @property
     def benchmark_summary(self) -> Path:
@@ -109,8 +115,9 @@ class RuntimePaths(BaseModel):
         self,
         suite_name: str,
         track: str | None = None,
+        variant: str | None = None,
     ) -> Path:
-        return self.benchmark_suite_dir(suite_name, track) / "benchmark_summary.csv"
+        return self.benchmark_suite_dir(suite_name, track, variant) / "benchmark_summary.csv"
 
     @property
     def benchmark_detail(self) -> Path:
@@ -120,8 +127,9 @@ class RuntimePaths(BaseModel):
         self,
         suite_name: str,
         track: str | None = None,
+        variant: str | None = None,
     ) -> Path:
-        return self.benchmark_suite_dir(suite_name, track) / "benchmark_detail.jsonl"
+        return self.benchmark_suite_dir(suite_name, track, variant) / "benchmark_detail.jsonl"
 
     @property
     def experiment_report(self) -> Path:
@@ -131,11 +139,14 @@ class RuntimePaths(BaseModel):
         self,
         suite_name: str,
         track: str | None = None,
+        variant: str | None = None,
     ) -> Path:
-        return self.benchmark_suite_dir(suite_name, track) / "experiment_report.md"
+        return self.benchmark_suite_dir(suite_name, track, variant) / "experiment_report.md"
 
-    def benchmark_suite_manifest(self, suite_name: str, track: str) -> Path:
-        return self.benchmark_suite_dir(suite_name, track) / "manifest.json"
+    def benchmark_suite_manifest(
+        self, suite_name: str, track: str, variant: str | None = None
+    ) -> Path:
+        return self.benchmark_suite_dir(suite_name, track, variant) / "manifest.json"
 
     @classmethod
     def cwd(cls) -> "RuntimePaths":

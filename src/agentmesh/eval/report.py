@@ -12,14 +12,15 @@ def generate_report(
     *,
     suite_name: str | None = None,
     track: str | None = None,
+    variant: str | None = None,
 ) -> Path:
     summary_path = (
-        paths.benchmark_suite_summary(suite_name, track=track)
+        paths.benchmark_suite_summary(suite_name, track=track, variant=variant)
         if suite_name is not None
         else paths.benchmark_summary
     )
     report_path = (
-        paths.benchmark_suite_report(suite_name, track=track)
+        paths.benchmark_suite_report(suite_name, track=track, variant=variant)
         if suite_name is not None
         else paths.experiment_report
     )

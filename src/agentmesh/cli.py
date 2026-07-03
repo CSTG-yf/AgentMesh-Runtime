@@ -7,10 +7,12 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from agentmesh.chat.session import ChatTurn, run_chat_turn
+from agentmesh.config import AgentMeshConfig
 from agentmesh.encoding import configure_utf8_environment
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.compare import run_prompt_compare
 from agentmesh.eval.dashboard import generate_dashboard
+from agentmesh.eval.llm_experiment import load_llm_experiment_profile
 from agentmesh.eval.report import generate_report
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.maintenance import MemoryMaintenanceWorker
@@ -88,20 +90,34 @@ def benchmark(
             help="Use the configured LLM from .env; pass --no-llm for offline benchmark.",
         ),
     ] = True,
+    profile: Annotated[
+        Path | None, typer.Option(help="Reproducible LLM experiment profile YAML.")
+    ] = None,
 ) -> None:
     paths = RuntimePaths(root=root)
     suite_path = _benchmark_suite_path(paths.root, suite)
     try:
+        if profile is not None and not llm:
+            raise ValueError("--profile cannot be combined with --no-llm")
+        experiment_profile = (
+            load_llm_experiment_profile(
+                profile if profile.is_absolute() else paths.root / profile
+            )
+            if profile is not None
+            else None
+        )
         summary = run_benchmark(
             suite_path,
             paths,
             use_llm=llm,
             progress_callback=lambda event: render_benchmark_progress(console, event),
+            profile=experiment_profile,
         )
         report_path = generate_report(
             paths,
             suite_name=summary.suite_name,
             track=summary.track.value,
+            variant=summary.artifact_variant or None,
         )
     except Exception as exc:
         console.print(f"[red]agentmesh benchmark failed:[/red] {exc}")
@@ -112,7 +128,23 @@ def benchmark(
         paths,
         suite_name=summary.suite_name,
         track=summary.track.value,
+        variant=summary.artifact_variant or None,
         report_path=report_path,
+    )
+
+
+@app.command()
+def config(
+    root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+) -> None:
+    runtime_config = AgentMeshConfig.from_project_root(root)
+    _print_json(
+        {
+            "llm_configured": runtime_config.llm.configured,
+            "base_url": runtime_config.llm.base_url,
+            "model": runtime_config.llm.model,
+            "api_key": "configured" if runtime_config.llm.api_key else "missing",
+        }
     )
 
 

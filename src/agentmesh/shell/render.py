@@ -471,15 +471,22 @@ def render_benchmark_artifacts(
     *,
     suite_name: str,
     track: str | None = None,
+    variant: str | None = None,
     report_path: Path | None = None,
 ) -> None:
     console.print("[bold]Benchmark output files[/bold]")
+    summary_path = paths.benchmark_suite_summary(
+        suite_name, track=track, variant=variant
+    )
+    detail_path = paths.benchmark_suite_detail(
+        suite_name, track=track, variant=variant
+    )
     console.print(
-        f"summary csv: {paths.benchmark_suite_summary(suite_name, track=track).resolve()}",
+        f"summary csv: {summary_path.resolve()}",
         soft_wrap=True,
     )
     console.print(
-        f"detail jsonl: {paths.benchmark_suite_detail(suite_name, track=track).resolve()}",
+        f"detail jsonl: {detail_path.resolve()}",
         soft_wrap=True,
     )
     if report_path is not None:
