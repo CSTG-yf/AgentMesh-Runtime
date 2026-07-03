@@ -277,7 +277,6 @@ def _run_protocol_mode_impl(
                     ContextPart(
                         name="planner_intent",
                         text=plan_summary,
-                        required=True,
                     ),
                 ],
             )
@@ -428,12 +427,24 @@ def _run_protocol_mode_impl(
         feedback_refs = [ref for ref in [plan_ref, evidence_ref, code_result_ref] if ref]
         if "plan.refine" in recommended_actions:
             stage_start = time.perf_counter()
+            planner_refine_task = (
+                budget_context(
+                    "planner_refine",
+                    experiment_profile.protocol.planner_max_chars,
+                    [
+                        ContextPart(name="task", text=task, required=True),
+                        *_refinement_feedback_parts(tool_feedback),
+                    ],
+                )
+                if optimization_enabled and experiment_profile is not None
+                else _compact_text(task, 300)
+            )
             refined_plan_result = scheduler.invoke(
                 source_agent="executor",
                 action="plan.refine",
                 params={
-                    "task": _compact_text(task, 300),
-                    "tool_feedback": tool_feedback,
+                    "task": planner_refine_task,
+                    "tool_feedback": {} if optimization_enabled else tool_feedback,
                 },
                 state_refs=[task_ref] + feedback_refs,
             )
@@ -459,12 +470,24 @@ def _run_protocol_mode_impl(
         )
         if should_refine_evidence:
             stage_start = time.perf_counter()
+            retriever_refine_query = (
+                budget_context(
+                    "retriever_refine",
+                    experiment_profile.protocol.retriever_max_chars,
+                    [
+                        ContextPart(name="task", text=task, required=True),
+                        *_refinement_feedback_parts(tool_feedback),
+                    ],
+                )
+                if optimization_enabled and experiment_profile is not None
+                else _compact_text(task, 300)
+            )
             refined_evidence_result = scheduler.invoke(
                 source_agent="planner" if refined_plan_ref else "executor",
                 action="evidence.refine",
                 params={
-                    "query": _compact_text(task, 300),
-                    "tool_feedback": tool_feedback,
+                    "query": retriever_refine_query,
+                    "tool_feedback": {} if optimization_enabled else tool_feedback,
                 },
                 state_refs=(
                     [task_ref]
@@ -1183,3 +1206,25 @@ def _fallback_summary(
     if not code_result_summary:
         return base
     return f"{base}\n\nCodeAct result: {code_result_summary}"
+
+
+def _refinement_feedback_parts(
+    tool_feedback: dict[str, Any],
+) -> list[ContextPart]:
+    priorities = [
+        "evidence_gaps",
+        "failed_claims",
+        "recommended_next_actions",
+        "validated_claims",
+        "execution_status",
+        "stdout_summary",
+        "stderr_summary",
+    ]
+    return [
+        ContextPart(
+            name=name,
+            text=orjson.dumps(tool_feedback.get(name)).decode("utf-8"),
+        )
+        for name in priorities
+        if tool_feedback.get(name) not in (None, "", [], {})
+    ]

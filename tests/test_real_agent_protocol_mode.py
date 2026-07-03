@@ -8,7 +8,7 @@ from agentmesh.eval.llm_experiment import (
 )
 from agentmesh.llm.client import ChatMessage, LLMClient
 from agentmesh.modes.protocol_mode import run_protocol_mode
-from agentmesh.sandbox.runner import SandboxRunner
+from agentmesh.sandbox.runner import SandboxResult, SandboxRunner
 from agentmesh.state.schema import StateType
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import read_jsonl
@@ -149,7 +149,13 @@ def test_candidate_profile_applies_auditable_role_context_budgets(
         for audit in result.metrics.context_audits
     )
     assert result.metrics.context_original_chars >= result.metrics.context_retained_chars
-    assert result.metrics.context_safe_fallback_count == 4
+    assert result.metrics.context_safe_fallback_count >= 1
+    retriever_audit = next(
+        audit
+        for audit in result.metrics.context_audits
+        if audit["role"] == "retriever"
+    )
+    assert "planner_intent" in retriever_audit["dropped_parts"]
     role_calls = {
         str(call["agent_name"]): call
         for call in llm_client.calls
@@ -191,3 +197,58 @@ def test_disabled_profile_preserves_no_profile_protocol_params(tmp_path: Path) -
     assert baseline_params == no_profile_params
     assert no_profile.metrics.context_audits == []
     assert baseline.metrics.context_audits == []
+
+
+def test_candidate_budgets_planner_and_evidence_refinement_contexts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task_text = "Validate code benchmark context."
+    task = tmp_path / "task.txt"
+    task.write_text(task_text, encoding="utf-8")
+    paths = RuntimePaths(root=tmp_path)
+    max_chars = len(task_text) + 6
+
+    def feedback_result(self: SandboxRunner, code: str) -> SandboxResult:
+        del self, code
+        return SandboxResult(
+            stdout='{"evidence_gaps":["missing baseline details"]}',
+            stderr="",
+            exit_code=0,
+            latency_ms=1,
+            backend="test",
+        )
+
+    monkeypatch.setattr(SandboxRunner, "run_python", feedback_result)
+    result = run_protocol_mode(
+        task_path=task,
+        paths=paths,
+        llm_client=AgentEchoLLMClient(),
+        experiment_profile=LLMExperimentProfile(
+            profile_id="candidate-refine",
+            artifact_label="candidate-refine",
+            optimization_enabled=True,
+            protocol=ProtocolOptimizationProfile(
+                planner_max_chars=max_chars,
+                retriever_max_chars=max_chars,
+                executor_max_chars=max_chars,
+                summarizer_max_chars=max_chars,
+            ),
+        ),
+    )
+
+    audits = {str(audit["role"]): audit for audit in result.metrics.context_audits}
+    assert {"planner_refine", "retriever_refine"} <= audits.keys()
+    for role in ["planner_refine", "retriever_refine"]:
+        assert int(audits[role]["retained_chars"]) <= int(audits[role]["original_chars"])
+        assert int(audits[role]["retained_chars"]) <= max_chars
+        assert "evidence_gaps" in audits[role]["included_parts"]
+    refine_rows = {
+        row["input"]["action"]: row["input"]["params"]
+        for row in read_jsonl(paths.protocol_agent_io)
+        if row["input"]["action"] in {"plan.refine", "evidence.refine"}
+    }
+    assert task_text in str(refine_rows["plan.refine"]["task"])
+    assert task_text in str(refine_rows["evidence.refine"]["query"])
+    assert refine_rows["plan.refine"]["tool_feedback"] == {}
+    assert refine_rows["evidence.refine"]["tool_feedback"] == {}
