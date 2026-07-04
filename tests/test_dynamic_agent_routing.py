@@ -10,7 +10,11 @@ from agentmesh.modes.protocol_mode import (
     _tool_feedback,
     run_protocol_mode,
 )
-from agentmesh.runtime.decision import PlannerDecision
+from agentmesh.runtime.decision import (
+    PlannerDecision,
+    _has_explicit_retrieval_intent,
+    _is_algorithmic_search_task,
+)
 from agentmesh.runtime.orchestrator import default_registry
 from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.runtime.scheduler import ProtocolScheduler
@@ -335,6 +339,47 @@ def test_quality_safe_v2_unknown_sources_cannot_bypass_retrieval_floor(
 
     assert decision.need_retrieval
     assert "retriever" in decision.execution_route
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "Compare binary and linear search according to Confluence.",
+        "Analyze binary search based on internal history.",
+        "Explain binary search per the engineering handbook.",
+        "Evaluate linear search using FooDB.",
+        "比较二分查找和线性查找，根据团队资料。",
+        "分析二分查找性能，基于内部记录。",
+        "Describe binary search using guidance provided by the platform team.",
+        "Contrast search algorithms with data from the incident archive.",
+        "解释二分查找，使用平台团队提供的数据。",
+        "评估线性查找，数据来自内部记录。",
+    ],
+)
+def test_quality_safe_v2_source_attribution_blocks_algorithm_fast_path(
+    task: str,
+) -> None:
+    assert _is_algorithmic_search_task(task)
+    assert _has_explicit_retrieval_intent(task)
+
+    decision = PlannerDecision.from_task(task).for_policy(
+        "quality_safe_v2",
+        task=task,
+    )
+
+    assert decision.need_retrieval
+    assert "retriever" in decision.execution_route
+
+
+def test_quality_safe_v2_sb3_has_no_explicit_retrieval_intent() -> None:
+    task = "Compare linear search vs binary search."
+
+    assert _is_algorithmic_search_task(task)
+    assert not _has_explicit_retrieval_intent(task)
+    assert not PlannerDecision.from_task(task).for_policy(
+        "quality_safe_v2",
+        task=task,
+    ).need_retrieval
 
 
 def test_quality_safe_v1_keeps_algorithmic_search_legacy_behavior() -> None:
