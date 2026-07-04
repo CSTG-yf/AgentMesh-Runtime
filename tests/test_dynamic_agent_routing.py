@@ -223,6 +223,8 @@ def test_legacy_policy_is_unchanged() -> None:
         "Explain when to use a binary search algorithm.",
         "Analyze the time complexity of linear search.",
         "分析二分查找和线性查找的复杂度。",
+        "Please compare linear search vs binary search.",
+        "请比较二分查找和线性查找。",
     ],
 )
 def test_quality_safe_v2_skips_retrieval_for_algorithmic_search(task: str) -> None:
@@ -304,6 +306,12 @@ def test_quality_safe_v2_keeps_retrieval_for_explicit_external_search(
         "Consult the team wiki about linear search complexity.",
         "Use the architecture archive to compare linear and binary search.",
         "查阅团队知识库，分析二分查找的性能。",
+        "According to Confluence, compare linear and binary search.",
+        "Based on internal history, analyze binary search performance.",
+        "Per the engineering handbook, explain binary search complexity.",
+        "Using FooDB, evaluate linear search performance.",
+        "根据团队资料，比较二分查找和线性查找。",
+        "基于内部记录，分析二分查找性能。",
     ],
 )
 def test_quality_safe_v2_unknown_sources_cannot_bypass_retrieval_floor(
