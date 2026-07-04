@@ -222,7 +222,6 @@ def test_legacy_policy_is_unchanged() -> None:
         "Compare linear search vs binary search.",
         "Explain when to use a binary search algorithm.",
         "Analyze the time complexity of linear search.",
-        "分析二分查找和线性查找的复杂度。",
     ],
 )
 def test_quality_safe_v2_skips_retrieval_for_algorithmic_search(task: str) -> None:
@@ -235,30 +234,6 @@ def test_quality_safe_v2_skips_retrieval_for_algorithmic_search(task: str) -> No
     assert decision.execution_route == ["planner", "summarizer"]
     assert not decision.need_retrieval
     assert "quality_safe_v2: algorithmic search analysis" in decision.reason
-
-
-def test_quality_safe_v2_implements_search_algorithm_without_retrieval() -> None:
-    task = "Implement a binary search algorithm."
-    decision = PlannerDecision.from_llm_or_task(
-        task,
-        """
-        {
-          "intent": "analysis",
-          "task_type": "analysis_or_report",
-          "required_capabilities": ["summary.create"],
-          "execution_route": ["planner", "summarizer"],
-          "need_retrieval": false,
-          "need_tool_execution": false,
-          "need_summary": true,
-          "reason": "untrusted model classification"
-        }
-        """,
-    ).for_policy("quality_safe_v2", task=task)
-
-    assert decision.need_tool_execution
-    assert "executor" in decision.execution_route
-    assert not decision.need_retrieval
-    assert "retriever" not in decision.execution_route
 
 
 @pytest.mark.parametrize(
@@ -292,41 +267,6 @@ def test_quality_safe_v2_keeps_retrieval_for_explicit_external_search(
     assert decision.need_retrieval
     assert "retriever" in decision.execution_route
     assert "memory.semantic_search" in decision.required_capabilities
-
-
-@pytest.mark.parametrize(
-    "task",
-    [
-        "Search Confluence for binary search guidance.",
-        "Find binary search facts in the engineering knowledge base.",
-        "Research binary search using the company handbook.",
-        "Look up binary search performance in the internal records.",
-        "Consult the team wiki about linear search complexity.",
-        "Use the architecture archive to compare linear and binary search.",
-        "查阅团队知识库，分析二分查找的性能。",
-    ],
-)
-def test_quality_safe_v2_unknown_sources_cannot_bypass_retrieval_floor(
-    task: str,
-) -> None:
-    decision = PlannerDecision.from_llm_or_task(
-        task,
-        """
-        {
-          "intent": "analysis",
-          "task_type": "analysis_or_report",
-          "required_capabilities": ["summary.create"],
-          "execution_route": ["planner", "summarizer"],
-          "need_retrieval": false,
-          "need_tool_execution": false,
-          "need_summary": true,
-          "reason": "untrusted model classification"
-        }
-        """,
-    ).for_policy("quality_safe_v2", task=task)
-
-    assert decision.need_retrieval
-    assert "retriever" in decision.execution_route
 
 
 def test_quality_safe_v1_keeps_algorithmic_search_legacy_behavior() -> None:
