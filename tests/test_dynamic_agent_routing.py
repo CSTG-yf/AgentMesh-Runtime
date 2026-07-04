@@ -216,6 +216,38 @@ def test_legacy_policy_is_unchanged() -> None:
     assert decision.for_policy("legacy") == decision
 
 
+@pytest.mark.parametrize(
+    "task",
+    [
+        "Remember my preferred editor for future sessions.",
+        "Find the latest documentation for this API.",
+        "Perform a security code review of this repository.",
+    ],
+)
+def test_quality_safe_policy_does_not_trust_llm_analysis_misclassification(
+    task: str,
+) -> None:
+    decision = PlannerDecision.from_llm_or_task(
+        task,
+        """
+        {
+          "intent": "analysis",
+          "task_type": "analysis_or_report",
+          "required_capabilities": ["summary.create"],
+          "execution_route": ["planner", "summarizer"],
+          "need_retrieval": false,
+          "need_tool_execution": false,
+          "need_summary": true,
+          "reason": "untrusted model classification"
+        }
+        """,
+    ).for_policy("quality_safe_v1", task=task)
+
+    assert decision.need_retrieval
+    assert "retriever" in decision.execution_route
+    assert "memory.semantic_search" in decision.required_capabilities
+
+
 def test_candidate_quality_safe_route_is_persisted_in_metrics(tmp_path: Path) -> None:
     task = tmp_path / "task.txt"
     task.write_text("Analyze and explain quicksort.", encoding="utf-8")

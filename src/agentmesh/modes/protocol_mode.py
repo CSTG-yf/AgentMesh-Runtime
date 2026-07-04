@@ -230,6 +230,7 @@ def _run_protocol_mode_impl(
         decision = decision.for_policy(
             experiment_profile.route_policy_version,
             capability_to_agent=context.capability_to_agent,
+            task=task,
         )
     plan_summary = _planner_summary(planner_result)
     planner_direct_answer = _planner_direct_answer(planner_result, decision)

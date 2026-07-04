@@ -113,14 +113,35 @@ class PlannerDecision(BaseModel):
         self,
         policy_version: str,
         capability_to_agent: Mapping[str, str] | None = None,
+        *,
+        task: str | None = None,
+        trusted_decision: PlannerDecision | None = None,
     ) -> PlannerDecision:
         if policy_version != "quality_safe_v1":
             return self
-        if self.need_tool_execution or self.task_type not in {
-            "chat",
-            "summary_only",
-            "analysis_or_report",
-        }:
+        trusted = trusted_decision
+        if trusted is None and task is not None:
+            trusted = PlannerDecision.from_task(
+                task,
+                capability_to_agent=capability_to_agent,
+            )
+        safe_task_types = {"chat", "summary_only", "analysis_or_report"}
+        if trusted is not None and (
+            trusted.need_tool_execution
+            or trusted.task_type not in safe_task_types
+        ):
+            return self.model_copy(
+                update={
+                    "need_retrieval": self.need_retrieval
+                    or trusted.need_retrieval,
+                    "need_tool_execution": self.need_tool_execution
+                    or trusted.need_tool_execution,
+                    "reason": (
+                        f"{self.reason}; quality_safe_v1: trusted route safety floor"
+                    ),
+                }
+            ).normalized(capability_to_agent=capability_to_agent)
+        if self.need_tool_execution or self.task_type not in safe_task_types:
             return self
         retriever = _agent_for_capability(
             "memory.semantic_search", capability_to_agent
