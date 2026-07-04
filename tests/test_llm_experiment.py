@@ -41,6 +41,19 @@ protocol: {}
     assert len(profile.sha256) == 64
 
 
+def test_load_p3_candidate_v2_profile_records_unique_provenance() -> None:
+    profile = load_llm_experiment_profile(
+        Path("examples/benchmarks/profiles/p3_candidate_v2.yaml")
+    )
+
+    assert profile.profile_id == "p3-candidate-v2"
+    assert profile.artifact_label == "p3-candidate-v2"
+    assert profile.prompt_version == "p3-v2"
+    assert profile.route_policy_version == "quality_safe_v2"
+    assert profile.optimization_enabled
+    assert len(profile.sha256) == 64
+
+
 @pytest.mark.parametrize("artifact_label", ["a/b", "", " leading", "two words", "a\\b"])
 def test_profile_rejects_noncanonical_artifact_label(artifact_label: str) -> None:
     with pytest.raises(ValidationError):

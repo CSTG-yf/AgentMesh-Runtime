@@ -1,0 +1,13 @@
+profile_id: p3-candidate-v2
+artifact_label: p3-candidate-v2
+repeat: 3
+prompt_version: p3-v2
+route_policy_version: quality_safe_v2
+optimization_enabled: true
+protocol:
+  planner_max_chars: 700
+  retriever_max_chars: 900
+  executor_max_chars: 1400
+  summarizer_max_chars: 1500
+  evidence_max_items: 2
+  evidence_min_score: 0.35

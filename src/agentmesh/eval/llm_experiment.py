@@ -27,7 +27,9 @@ class LLMExperimentProfile(BaseModel):
     artifact_label: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     repeat: int = Field(default=3, gt=0)
     prompt_version: str = "p2"
-    route_policy_version: Literal["legacy", "quality_safe_v1"] = "legacy"
+    route_policy_version: Literal[
+        "legacy", "quality_safe_v1", "quality_safe_v2"
+    ] = "legacy"
     optimization_enabled: bool = False
     protocol: ProtocolOptimizationProfile = Field(
         default_factory=ProtocolOptimizationProfile
