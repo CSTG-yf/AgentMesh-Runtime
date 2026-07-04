@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 
 import orjson
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agentmesh.eval.experiment import BenchmarkTrack, ExperimentManifest
 from agentmesh.storage.paths import RuntimePaths
@@ -25,6 +25,22 @@ class LLMExperimentResult(BaseModel):
     protocol_token_mean: float = Field(ge=0.0)
     protocol_latency_p50: float = Field(ge=0.0)
     protocol_latency_p95: float = Field(ge=0.0)
+
+    @field_validator(
+        "text_quality_mean",
+        "text_quality_pass_rate",
+        "protocol_quality_mean",
+        "protocol_quality_pass_rate",
+        "protocol_token_mean",
+        "protocol_latency_p50",
+        "protocol_latency_p95",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_metrics(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("boolean values are not valid comparison metrics")
+        return value
 
 
 class LLMComparisonResult(BaseModel):
@@ -224,11 +240,15 @@ def _required_float(summary: dict[str, str], field: str) -> float:
     raw = summary.get(field)
     if raw is None or raw == "":
         raise ValueError(f"missing {field} in benchmark summary")
+    if raw.strip().lower() in {"true", "false"}:
+        raise ValueError(f"boolean {field} is not a valid benchmark metric")
     return float(raw)
 
 
 def _required_number(values: dict[str, object], field: str) -> float:
     value = values.get(field)
+    if isinstance(value, bool):
+        raise ValueError(f"boolean {field} is not a valid benchmark statistic")
     if not isinstance(value, int | float):
         raise ValueError(f"missing numeric {field} in benchmark statistics")
     return float(value)

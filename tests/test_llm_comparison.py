@@ -181,6 +181,26 @@ def test_typed_experiment_allows_zero_token_and_latency_metrics() -> None:
     assert result.protocol_latency_p50 == 0
 
 
+@pytest.mark.parametrize("value", [True, False])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "text_quality_mean",
+        "text_quality_pass_rate",
+        "protocol_quality_mean",
+        "protocol_quality_pass_rate",
+        "protocol_token_mean",
+        "protocol_latency_p50",
+        "protocol_latency_p95",
+    ],
+)
+def test_typed_experiment_rejects_boolean_metrics(
+    field: str, value: bool
+) -> None:
+    with pytest.raises(ValidationError, match="boolean"):
+        _experiment(**{field: value})
+
+
 @pytest.mark.parametrize(
     ("field", "invalid"),
     [
@@ -205,6 +225,34 @@ def test_loader_rejects_invalid_metrics(
         writer.writerow(row)
 
     with pytest.raises((ValueError, ValidationError), match="finite|greater|invalid"):
+        load_llm_experiment_result(paths, "continuous_tasks", "candidate")
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("protocol_quality_mean", "True"),
+        ("text_quality_pass_rate", "False"),
+        ("protocol_token_stats", '{"mean":true}'),
+        ("protocol_latency_stats", '{"p50":false,"p95":390}'),
+        ("protocol_latency_stats", '{"p50":150,"p95":true}'),
+    ],
+)
+def test_loader_rejects_boolean_metrics(
+    tmp_path: Path, field: str, invalid: str
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    artifact_dir = _write_complete_artifacts(paths)
+    summary_path = artifact_dir / "benchmark_summary.csv"
+    with summary_path.open("r", encoding="utf-8", newline="") as file:
+        row = list(csv.DictReader(file))[0]
+    row[field] = invalid
+    with summary_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(row))
+        writer.writeheader()
+        writer.writerow(row)
+
+    with pytest.raises((ValueError, ValidationError), match="boolean"):
         load_llm_experiment_result(paths, "continuous_tasks", "candidate")
 
 
