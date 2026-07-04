@@ -219,70 +219,6 @@ def test_legacy_policy_is_unchanged() -> None:
 @pytest.mark.parametrize(
     "task",
     [
-        "Compare linear search vs binary search.",
-        "Explain when to use a binary search algorithm.",
-        "Analyze the time complexity of linear search.",
-    ],
-)
-def test_quality_safe_v2_skips_retrieval_for_algorithmic_search(task: str) -> None:
-    decision = PlannerDecision.from_task(task).for_policy(
-        "quality_safe_v2",
-        task=task,
-    )
-
-    assert decision.task_type == "analysis_or_report"
-    assert decision.execution_route == ["planner", "summarizer"]
-    assert not decision.need_retrieval
-    assert "quality_safe_v2: algorithmic search analysis" in decision.reason
-
-
-@pytest.mark.parametrize(
-    "task",
-    [
-        "Search memory for my notes about binary search.",
-        "Find the latest docs for the binary search API.",
-        "Search this repository for implementations of linear search.",
-        "Find facts and sources about search algorithms.",
-    ],
-)
-def test_quality_safe_v2_keeps_retrieval_for_explicit_external_search(
-    task: str,
-) -> None:
-    decision = PlannerDecision.from_llm_or_task(
-        task,
-        """
-        {
-          "intent": "analysis",
-          "task_type": "analysis_or_report",
-          "required_capabilities": ["summary.create"],
-          "execution_route": ["planner", "summarizer"],
-          "need_retrieval": false,
-          "need_tool_execution": false,
-          "need_summary": true,
-          "reason": "untrusted model classification"
-        }
-        """,
-    ).for_policy("quality_safe_v2", task=task)
-
-    assert decision.need_retrieval
-    assert "retriever" in decision.execution_route
-    assert "memory.semantic_search" in decision.required_capabilities
-
-
-def test_quality_safe_v1_keeps_algorithmic_search_legacy_behavior() -> None:
-    task = "Compare linear search vs binary search."
-    decision = PlannerDecision.from_task(task).for_policy(
-        "quality_safe_v1",
-        task=task,
-    )
-
-    assert decision.need_retrieval
-    assert "retriever" in decision.execution_route
-
-
-@pytest.mark.parametrize(
-    "task",
-    [
         "Remember my preferred editor for future sessions.",
         "Find the latest documentation for this API.",
         "Perform a security code review of this repository.",
@@ -331,57 +267,6 @@ def test_candidate_quality_safe_route_is_persisted_in_metrics(tmp_path: Path) ->
     assert result.metrics.dynamic_route == ["planner", "summarizer"]
     assert result.metrics.route_policy_version == "quality_safe_v1"
     assert "retrieval not required" in result.metrics.route_reason
-
-
-def test_quality_safe_v2_protocol_skips_algorithm_search_retriever_with_fake_llm(
-    tmp_path: Path,
-) -> None:
-    class AnalysisLLM(LLMClient):
-        def __init__(self) -> None:
-            self.agents: list[str] = []
-
-        def complete(
-            self,
-            *,
-            agent_name: str,
-            messages: list[ChatMessage],
-            variables: dict[str, object] | None = None,
-        ) -> str:
-            del messages, variables
-            self.agents.append(agent_name)
-            if agent_name == "planner":
-                return """
-                {
-                  "intent": "analysis",
-                  "task_type": "analysis_or_report",
-                  "required_capabilities": ["summary.create"],
-                  "execution_route": ["planner", "summarizer"],
-                  "need_retrieval": false,
-                  "need_tool_execution": false,
-                  "need_summary": true,
-                  "reason": "algorithm comparison"
-                }
-                """
-            return "concise answer"
-
-    task = tmp_path / "task.txt"
-    task.write_text("Compare linear search vs binary search.", encoding="utf-8")
-    client = AnalysisLLM()
-    result = run_protocol_mode(
-        task,
-        RuntimePaths(root=tmp_path / "candidate-v2"),
-        llm_client=client,
-        experiment_profile=LLMExperimentProfile(
-            profile_id="candidate-v2",
-            artifact_label="candidate-v2",
-            route_policy_version="quality_safe_v2",
-            optimization_enabled=True,
-        ),
-    )
-
-    assert "retriever" not in client.agents
-    assert result.metrics.dynamic_route == ["planner", "summarizer"]
-    assert result.metrics.route_policy_version == "quality_safe_v2"
 
 
 def test_planner_decision_normalizes_route_from_capability_advertisements() -> None:

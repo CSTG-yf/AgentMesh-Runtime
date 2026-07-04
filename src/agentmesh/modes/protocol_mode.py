@@ -107,8 +107,7 @@ def _run_protocol_mode_impl(
     quality_safe_candidate = bool(
         optimization_enabled
         and experiment_profile is not None
-        and experiment_profile.route_policy_version
-        in {"quality_safe_v1", "quality_safe_v2"}
+        and experiment_profile.route_policy_version == "quality_safe_v1"
     )
 
     def budget_context(

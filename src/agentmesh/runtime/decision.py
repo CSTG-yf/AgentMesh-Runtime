@@ -117,7 +117,7 @@ class PlannerDecision(BaseModel):
         task: str | None = None,
         trusted_decision: PlannerDecision | None = None,
     ) -> PlannerDecision:
-        if policy_version not in {"quality_safe_v1", "quality_safe_v2"}:
+        if policy_version != "quality_safe_v1":
             return self
         trusted = trusted_decision
         if trusted is None and task is not None:
@@ -125,39 +125,6 @@ class PlannerDecision(BaseModel):
                 task,
                 capability_to_agent=capability_to_agent,
             )
-        if (
-            policy_version == "quality_safe_v2"
-            and task is not None
-            and _is_algorithmic_search(task)
-            and not _has_explicit_external_retrieval_intent(task)
-            and not self.need_tool_execution
-            and (trusted is None or not trusted.need_tool_execution)
-        ):
-            retriever = _agent_for_capability(
-                "memory.semantic_search", capability_to_agent
-            )
-            return self.model_copy(
-                update={
-                    "intent": "analysis",
-                    "task_type": "analysis_or_report",
-                    "required_capabilities": [
-                        capability
-                        for capability in self.required_capabilities
-                        if capability
-                        not in {"memory.semantic_search", "evidence.refine"}
-                    ],
-                    "execution_route": [
-                        agent
-                        for agent in self.execution_route
-                        if agent not in {"retriever", retriever}
-                    ],
-                    "need_retrieval": False,
-                    "reason": (
-                        f"{self.reason}; "
-                        "quality_safe_v2: algorithmic search analysis"
-                    ),
-                }
-            ).normalized(capability_to_agent=capability_to_agent)
         safe_task_types = {"chat", "summary_only", "analysis_or_report"}
         if trusted is not None and (
             trusted.need_tool_execution
@@ -170,7 +137,7 @@ class PlannerDecision(BaseModel):
                     "need_tool_execution": self.need_tool_execution
                     or trusted.need_tool_execution,
                     "reason": (
-                        f"{self.reason}; {policy_version}: trusted route safety floor"
+                        f"{self.reason}; quality_safe_v1: trusted route safety floor"
                     ),
                 }
             ).normalized(capability_to_agent=capability_to_agent)
@@ -194,7 +161,7 @@ class PlannerDecision(BaseModel):
                 ],
                 "need_retrieval": False,
                 "reason": (
-                    f"{self.reason}; {policy_version}: retrieval not required"
+                    f"{self.reason}; quality_safe_v1: retrieval not required"
                 ),
             }
         )
@@ -488,59 +455,6 @@ def _is_retrieval_task(text: str) -> bool:
             "source",
             "citation",
             "latest",
-        ],
-    )
-
-
-def _is_algorithmic_search(text: str) -> bool:
-    normalized = re.sub(r"\s+", " ", text.lower()).strip()
-    return bool(
-        re.search(
-            r"\b(?:binary|linear|sequential|interpolation|exponential|"
-            r"ternary|jump|depth[- ]first|breadth[- ]first)\s+search\b",
-            normalized,
-        )
-        or re.search(r"\bsearch\s+algorithms?\b", normalized)
-        or _contains_any(
-            normalized,
-            ["二分查找", "线性查找", "顺序查找", "搜索算法", "查找算法"],
-        )
-    )
-
-
-def _has_explicit_external_retrieval_intent(text: str) -> bool:
-    normalized = re.sub(r"\s+", " ", text.lower()).strip()
-    return _contains_any(
-        normalized,
-        [
-            "search memory",
-            "search my notes",
-            "latest",
-            "docs",
-            "documentation",
-            "api",
-            "repository",
-            "repo",
-            "codebase",
-            "find facts",
-            "source",
-            "citation",
-            "web",
-            "internet",
-            "file",
-            "检索记忆",
-            "搜索记忆",
-            "最新",
-            "文档",
-            "接口",
-            "仓库",
-            "代码库",
-            "事实",
-            "来源",
-            "引用",
-            "网页",
-            "互联网",
-            "文件",
         ],
     )
 
