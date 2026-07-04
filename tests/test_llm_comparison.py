@@ -181,6 +181,11 @@ def test_typed_experiment_allows_zero_token_and_latency_metrics() -> None:
     assert result.protocol_latency_p50 == 0
 
 
+def test_typed_experiment_rejects_p50_above_p95() -> None:
+    with pytest.raises(ValidationError, match="p50.*p95"):
+        _experiment(protocol_latency_p50=401, protocol_latency_p95=400)
+
+
 @pytest.mark.parametrize("value", [True, False])
 @pytest.mark.parametrize(
     "field",
@@ -285,6 +290,60 @@ def test_loader_rejects_incomplete_manifest(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="not complete"):
         load_llm_experiment_result(paths, "continuous_tasks", "candidate")
+
+
+def test_loader_rejects_manifest_suite_name_mismatch(tmp_path: Path) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    artifact_dir = _write_complete_artifacts(paths)
+    manifest_path = artifact_dir / "manifest.json"
+    manifest = orjson.loads(manifest_path.read_bytes())
+    manifest["suite_name"] = "other_suite"
+    manifest_path.write_bytes(orjson.dumps(manifest))
+
+    with pytest.raises(ValueError, match="suite name mismatch"):
+        load_llm_experiment_result(paths, "continuous_tasks", "candidate")
+
+
+@pytest.mark.parametrize(
+    ("header_transform", "message"),
+    [
+        (lambda fields: fields[1:], "missing required columns"),
+        (lambda fields: [*fields, fields[0]], "duplicate columns"),
+    ],
+)
+def test_loader_rejects_invalid_csv_headers(
+    tmp_path: Path, header_transform, message: str
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    artifact_dir = _write_complete_artifacts(paths)
+    summary_path = artifact_dir / "benchmark_summary.csv"
+    with summary_path.open("r", encoding="utf-8", newline="") as file:
+        row = list(csv.DictReader(file))[0]
+    fieldnames = header_transform(list(row))
+    with summary_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerow(row)
+
+    with pytest.raises(ValueError, match=message):
+        load_llm_experiment_result(paths, "continuous_tasks", "candidate")
+
+
+def test_loader_allows_additional_csv_columns(tmp_path: Path) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    artifact_dir = _write_complete_artifacts(paths)
+    summary_path = artifact_dir / "benchmark_summary.csv"
+    with summary_path.open("r", encoding="utf-8", newline="") as file:
+        row = list(csv.DictReader(file))[0]
+    row["future_metric"] = "supported"
+    with summary_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(row))
+        writer.writeheader()
+        writer.writerow(row)
+
+    result = load_llm_experiment_result(paths, "continuous_tasks", "candidate")
+
+    assert result.profile_id == "candidate"
 
 
 def test_loader_reads_complete_typed_artifacts(tmp_path: Path) -> None:

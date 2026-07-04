@@ -152,6 +152,8 @@ def benchmark_compare(
         console.print(f"[red]agentmesh benchmark-compare failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     _print_json(result.model_dump(mode="json"))
+    if not result.efficiency_claim_allowed:
+        raise typer.Exit(code=2)
 
 
 @app.command()

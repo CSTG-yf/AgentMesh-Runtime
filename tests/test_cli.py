@@ -94,7 +94,34 @@ def test_benchmark_compare_prints_machine_readable_gate_result(
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 2
     payload = orjson.loads(result.stdout)
     assert payload["efficiency_claim_allowed"] is False
     assert payload["reasons"] == ["quality mean regressed"]
+
+
+def test_benchmark_compare_input_error_exits_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def fail(*_args, **_kwargs):
+        raise ValueError("incompatible model fingerprint")
+
+    monkeypatch.setattr("agentmesh.cli.compare_llm_artifacts", fail)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "benchmark-compare",
+            "--suite",
+            "continuous_tasks",
+            "--baseline",
+            "p3-baseline",
+            "--candidate",
+            "p3-candidate",
+            "--root",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "incompatible model fingerprint" in result.stdout

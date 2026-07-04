@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import csv
+from collections import Counter
 from pathlib import Path
 
 import orjson
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agentmesh.eval.experiment import BenchmarkTrack, ExperimentManifest
 from agentmesh.storage.paths import RuntimePaths
+
+_REQUIRED_SUMMARY_COLUMNS = {
+    "experiment_id",
+    "repeat_count",
+    "quality_rules_sha256",
+    "text_quality_mean",
+    "text_quality_pass_rate",
+    "protocol_quality_mean",
+    "protocol_quality_pass_rate",
+    "protocol_token_stats",
+    "protocol_latency_stats",
+}
 
 
 class LLMExperimentResult(BaseModel):
@@ -41,6 +54,12 @@ class LLMExperimentResult(BaseModel):
         if isinstance(value, bool):
             raise ValueError("boolean values are not valid comparison metrics")
         return value
+
+    @model_validator(mode="after")
+    def validate_latency_percentiles(self) -> LLMExperimentResult:
+        if self.protocol_latency_p50 > self.protocol_latency_p95:
+            raise ValueError("protocol latency p50 must not exceed p95")
+        return self
 
 
 class LLMComparisonResult(BaseModel):
@@ -137,6 +156,11 @@ def load_llm_experiment_result(
     if not manifest_path.exists():
         raise FileNotFoundError(f"experiment manifest not found: {manifest_path}")
     manifest = ExperimentManifest.model_validate(orjson.loads(manifest_path.read_bytes()))
+    if manifest.suite_name != suite_name:
+        raise ValueError(
+            "manifest suite name mismatch: "
+            f"expected {suite_name!r}, found {manifest.suite_name!r}"
+        )
     if (
         manifest.status != "complete"
         or manifest.expected_pairs <= 0
@@ -206,7 +230,23 @@ def _reduction_rate(baseline: float, candidate: float) -> float | None:
 
 def _read_single_summary(path: Path) -> dict[str, str]:
     with path.open("r", encoding="utf-8", newline="") as file:
-        rows = list(csv.DictReader(file))
+        reader = csv.DictReader(file)
+        fieldnames = reader.fieldnames
+        if not fieldnames:
+            raise ValueError(f"benchmark summary has no CSV header: {path}")
+        duplicates = sorted(
+            name for name, count in Counter(fieldnames).items() if count > 1
+        )
+        if duplicates:
+            raise ValueError(
+                f"benchmark summary has duplicate columns: {', '.join(duplicates)}"
+            )
+        missing = sorted(_REQUIRED_SUMMARY_COLUMNS.difference(fieldnames))
+        if missing:
+            raise ValueError(
+                f"benchmark summary missing required columns: {', '.join(missing)}"
+            )
+        rows = list(reader)
     if len(rows) != 1:
         raise ValueError(f"expected one summary row in {path}, found {len(rows)}")
     return rows[0]
