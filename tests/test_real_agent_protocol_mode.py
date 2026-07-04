@@ -155,7 +155,8 @@ def test_candidate_profile_applies_auditable_role_context_budgets(
         for audit in result.metrics.context_audits
         if audit["role"] == "retriever"
     )
-    assert "planner_intent" in retriever_audit["dropped_parts"]
+    assert "planner_intent" in retriever_audit["included_parts"]
+    assert retriever_audit["safe_fallback"] is True
     role_calls = {
         str(call["agent_name"]): call
         for call in llm_client.calls
@@ -164,6 +165,21 @@ def test_candidate_profile_applies_auditable_role_context_budgets(
     for role in ["planner", "retriever", "executor", "summarizer"]:
         rendered = f"{role_calls[role]['messages']} {role_calls[role]['variables']}"
         assert task_text in rendered
+    params_by_action = {
+        row["input"]["action"]: row["input"]["params"]
+        for row in read_jsonl(paths.protocol_agent_io)
+    }
+    executor_input = str(role_calls["executor"]["variables"]["input"])
+    summarizer_input = str(role_calls["summarizer"]["variables"]["input"])
+    assert params_by_action["tool.run_python"]["_disable_state_fallback"] is True
+    assert params_by_action["summary.create"]["_disable_state_fallback"] is True
+    assert " ".join(executor_input.split()) == params_by_action["tool.run_python"]["task"]
+    assert " ".join(summarizer_input.split()) == (
+        f"Task: {params_by_action['summary.create']['task']}"
+    )
+    assert executor_input.count(task_text) == 1
+    assert summarizer_input.count(task_text) == 1
+    assert summarizer_input.count("sandbox exit 0") == 1
 
 
 def test_disabled_profile_preserves_no_profile_protocol_params(tmp_path: Path) -> None:
@@ -195,6 +211,7 @@ def test_disabled_profile_preserves_no_profile_protocol_params(tmp_path: Path) -
         row["input"]["params"] for row in read_jsonl(baseline_paths.protocol_agent_io)
     ]
     assert baseline_params == no_profile_params
+    assert all("_disable_state_fallback" not in params for params in baseline_params)
     assert no_profile.metrics.context_audits == []
     assert baseline.metrics.context_audits == []
 
@@ -242,7 +259,7 @@ def test_candidate_budgets_planner_and_evidence_refinement_contexts(
     for role in ["planner_refine", "retriever_refine"]:
         assert int(audits[role]["retained_chars"]) <= int(audits[role]["original_chars"])
         assert int(audits[role]["retained_chars"]) <= max_chars
-        assert "evidence_gaps" in audits[role]["included_parts"]
+        assert "evidence_gaps" in audits[role]["partial_parts"]
     refine_rows = {
         row["input"]["action"]: row["input"]["params"]
         for row in read_jsonl(paths.protocol_agent_io)

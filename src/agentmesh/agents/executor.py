@@ -15,13 +15,14 @@ class ExecutorAgent(BaseAgent):
     def handle(self, message: AMPMessage, context: RuntimeContext) -> AMPMessage:
         task = str(message.params.get("task", ""))
         evidence = str(message.params.get("evidence", ""))
-        if not task:
+        disable_state_fallback = message.params.get("_disable_state_fallback") is True
+        if not task and not disable_state_fallback:
             task = first_text_payload(
                 context=context,
                 state_refs=message.state_refs,
                 consumer=self.name,
             )
-        if not evidence:
+        if not evidence and not disable_state_fallback:
             evidence = first_text_payload(
                 context=context,
                 state_refs=message.state_refs,

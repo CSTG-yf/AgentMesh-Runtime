@@ -277,6 +277,7 @@ def _run_protocol_mode_impl(
                     ContextPart(
                         name="planner_intent",
                         text=plan_summary,
+                        required=True,
                     ),
                 ],
             )
@@ -350,6 +351,11 @@ def _run_protocol_mode_impl(
                 "task": executor_task,
                 "evidence": "" if optimization_enabled else evidence_digest,
                 "evidence_count": len(evidence),
+                **(
+                    {"_disable_state_fallback": True}
+                    if optimization_enabled
+                    else {}
+                ),
             },
             state_refs=[ref for ref in [task_ref, evidence_ref] if ref],
         )
@@ -558,6 +564,11 @@ def _run_protocol_mode_impl(
             "code_result": "" if optimization_enabled else code_result_summary,
             "tool_feedback": tool_feedback or {},
             "dynamic_route": scheduler.selected_agents,
+            **(
+                {"_disable_state_fallback": True}
+                if optimization_enabled
+                else {}
+            ),
         },
         state_refs=summary_state_refs,
     )

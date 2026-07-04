@@ -3,6 +3,7 @@ from pathlib import Path
 from agentmesh.agents.executor import ExecutorAgent
 from agentmesh.agents.planner import PlannerAgent
 from agentmesh.agents.retriever import RetrieverAgent
+from agentmesh.agents.summarizer import SummarizerAgent
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.modes.protocol_mode import run_protocol_mode
@@ -19,6 +20,16 @@ class InvalidExecutorLLM:
     def complete(self, **kwargs: object) -> str:
         del kwargs
         return 'solution_md = """# DP solution\n## Code\n'
+
+
+class CapturingLLM:
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.calls: list[dict[str, object]] = []
+
+    def complete(self, **kwargs: object) -> str:
+        self.calls.append(kwargs)
+        return self.response
 
 
 def test_planner_reads_task_from_state_ref_when_params_are_empty(tmp_path: Path) -> None:
@@ -147,6 +158,164 @@ def test_executor_reads_task_from_state_ref_for_codeact(tmp_path: Path) -> None:
     assert "'status': 'validated'" in result.result["codeact_code"]
     record, _ = StateStore(paths).get(task_ref)
     assert "executor" in record.consumers
+
+
+def test_executor_explicit_empty_evidence_does_not_fallback_to_state(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    trace_id = "trace-budgeted-executor"
+    state_store = StateStore(paths)
+    task_ref = state_store.put_text(
+        trace_id=trace_id,
+        producer="runtime",
+        text="SECRET FULL STATE TASK",
+    )
+    llm = CapturingLLM("print('ok')")
+    context = RuntimeContext.from_paths(
+        paths=paths,
+        trace_id=trace_id,
+        llm_client=llm,
+        load_configured_llm=False,
+    )
+
+    ExecutorAgent().handle(
+        AMPMessage(
+            trace_id=trace_id,
+            source_agent="runtime",
+            target_agent="executor",
+            msg_type=MsgType.INVOKE,
+            action="tool.run_python",
+            params={
+                "task": "budgeted task",
+                "evidence": "",
+                "_disable_state_fallback": True,
+            },
+            state_refs=[task_ref],
+        ),
+        context,
+    )
+
+    assert llm.calls[0]["variables"] == {"input": "budgeted task"}
+    assert "SECRET FULL STATE TASK" not in str(llm.calls[0]["messages"])
+
+
+def test_executor_empty_evidence_still_falls_back_without_candidate_flag(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    trace_id = "trace-baseline-executor"
+    state_store = StateStore(paths)
+    task_ref = state_store.put_text(
+        trace_id=trace_id,
+        producer="runtime",
+        text="BASELINE STATE CONTEXT",
+    )
+    llm = CapturingLLM("print('ok')")
+    context = RuntimeContext.from_paths(
+        paths=paths,
+        trace_id=trace_id,
+        llm_client=llm,
+        load_configured_llm=False,
+    )
+
+    ExecutorAgent().handle(
+        AMPMessage(
+            trace_id=trace_id,
+            source_agent="runtime",
+            target_agent="executor",
+            msg_type=MsgType.INVOKE,
+            action="tool.run_python",
+            params={"task": "baseline task", "evidence": ""},
+            state_refs=[task_ref],
+        ),
+        context,
+    )
+
+    assert llm.calls[0]["variables"] == {
+        "input": "baseline task\nBASELINE STATE CONTEXT"
+    }
+
+
+def test_summarizer_explicit_empty_code_result_does_not_fallback_to_state(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    trace_id = "trace-budgeted-summarizer"
+    state_store = StateStore(paths)
+    code_ref = state_store.put_code_result(
+        trace_id=trace_id,
+        producer="executor",
+        result={
+            "stdout": "SECRET FULL CODE RESULT",
+            "stderr": "",
+            "exit_code": 0,
+        },
+    )
+    llm = CapturingLLM("summary")
+    context = RuntimeContext.from_paths(
+        paths=paths,
+        trace_id=trace_id,
+        llm_client=llm,
+        load_configured_llm=False,
+    )
+
+    SummarizerAgent().handle(
+        AMPMessage(
+            trace_id=trace_id,
+            source_agent="executor",
+            target_agent="summarizer",
+            msg_type=MsgType.INVOKE,
+            action="summary.create",
+            params={
+                "task": "budgeted task",
+                "evidence_digest": "",
+                "code_result": "",
+                "_disable_state_fallback": True,
+            },
+            state_refs=[code_ref],
+        ),
+        context,
+    )
+
+    assert llm.calls[0]["variables"] == {"input": "Task:\nbudgeted task"}
+    assert "SECRET FULL CODE RESULT" not in str(llm.calls[0]["messages"])
+
+
+def test_summarizer_empty_code_result_still_falls_back_without_candidate_flag(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    trace_id = "trace-baseline-summarizer"
+    state_store = StateStore(paths)
+    code_ref = state_store.put_code_result(
+        trace_id=trace_id,
+        producer="executor",
+        result={"stdout": "BASELINE CODE RESULT", "stderr": "", "exit_code": 0},
+    )
+    llm = CapturingLLM("summary")
+    context = RuntimeContext.from_paths(
+        paths=paths,
+        trace_id=trace_id,
+        llm_client=llm,
+        load_configured_llm=False,
+    )
+
+    SummarizerAgent().handle(
+        AMPMessage(
+            trace_id=trace_id,
+            source_agent="executor",
+            target_agent="summarizer",
+            msg_type=MsgType.INVOKE,
+            action="summary.create",
+            params={"task": "baseline task", "evidence_digest": "", "code_result": ""},
+            state_refs=[code_ref],
+        ),
+        context,
+    )
+
+    variables = str(llm.calls[0]["variables"])
+    assert "BASELINE CODE RESULT" in variables
 
 
 def test_executor_rejects_invalid_llm_code_before_codeact(tmp_path: Path) -> None:

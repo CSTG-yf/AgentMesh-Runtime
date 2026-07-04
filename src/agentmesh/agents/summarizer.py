@@ -17,8 +17,9 @@ class SummarizerAgent(BaseAgent):
         task = str(message.params.get("task", "") or "")
         evidence_digest = str(message.params.get("evidence_digest", "") or "")
         code_result = str(message.params.get("code_result", "") or "")
+        disable_state_fallback = message.params.get("_disable_state_fallback") is True
 
-        if not code_result:
+        if not code_result and not disable_state_fallback:
             code_result = first_code_result_text(
                 context=context,
                 state_refs=message.state_refs,
@@ -36,7 +37,7 @@ class SummarizerAgent(BaseAgent):
             if code_result:
                 input_parts.append(f"CodeAct result:\n{code_result}")
             input_text = "\n\n".join(input_parts)
-        else:
+        elif not disable_state_fallback:
             input_text = state_payloads_as_text(
                 context=context,
                 state_refs=message.state_refs,
@@ -44,6 +45,8 @@ class SummarizerAgent(BaseAgent):
             )
             if code_result:
                 input_text = f"{input_text}\n\nCodeAct result:\n{code_result}"
+        else:
+            input_text = ""
         summary = (
             "AgentMesh Runtime completed a deterministic collaboration step. "
             f"{code_result}".strip()
