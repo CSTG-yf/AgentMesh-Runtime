@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from agentmesh.errors import ProtocolError
+from agentmesh.eval.llm_experiment import LLMExperimentProfile
 from agentmesh.llm.client import ChatMessage, LLMClient
 from agentmesh.modes.protocol_mode import (
     _compact_code_result_payload,
@@ -184,6 +185,56 @@ def test_planner_decision_keeps_tool_execution_when_llm_json_under_routes() -> N
     assert decision.need_tool_execution
     assert "executor" in decision.execution_route
     assert "tool.run_python" in decision.required_capabilities
+
+
+def test_quality_safe_policy_skips_retrieval_for_explanation() -> None:
+    decision = PlannerDecision.from_task(
+        "Analyze and explain quicksort."
+    ).for_policy("quality_safe_v1")
+
+    assert decision.execution_route == ["planner", "summarizer"]
+    assert not decision.need_retrieval
+    assert "quality_safe_v1: retrieval not required" in decision.reason
+
+
+def test_quality_safe_policy_keeps_executor_and_memory_routes() -> None:
+    calculation = PlannerDecision.from_task("Calculate 2 + 2").for_policy(
+        "quality_safe_v1"
+    )
+    memory = PlannerDecision.from_task("Remember my preference").for_policy(
+        "quality_safe_v1"
+    )
+
+    assert calculation.execution_route == ["planner", "executor", "summarizer"]
+    assert memory.need_retrieval
+    assert "retriever" in memory.execution_route
+
+
+def test_legacy_policy_is_unchanged() -> None:
+    decision = PlannerDecision.from_task("Analyze this report")
+
+    assert decision.for_policy("legacy") == decision
+
+
+def test_candidate_quality_safe_route_is_persisted_in_metrics(tmp_path: Path) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Analyze and explain quicksort.", encoding="utf-8")
+
+    result = run_protocol_mode(
+        task,
+        RuntimePaths(root=tmp_path / "candidate"),
+        load_configured_llm=False,
+        experiment_profile=LLMExperimentProfile(
+            profile_id="candidate",
+            artifact_label="candidate",
+            route_policy_version="quality_safe_v1",
+            optimization_enabled=True,
+        ),
+    )
+
+    assert result.metrics.dynamic_route == ["planner", "summarizer"]
+    assert result.metrics.route_policy_version == "quality_safe_v1"
+    assert "retrieval not required" in result.metrics.route_reason
 
 
 def test_planner_decision_normalizes_route_from_capability_advertisements() -> None:

@@ -11,6 +11,11 @@ from agentmesh.errors import SandboxTimeoutError
 from agentmesh.eval.llm_experiment import LLMExperimentProfile
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
 from agentmesh.llm.client import InstrumentedLLMClient, LLMClient
+from agentmesh.memory.evidence_pack import (
+    EvidencePackAudit,
+    PackedEvidence,
+    pack_evidence,
+)
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.tagger import LLMMemoryTagger
@@ -97,6 +102,11 @@ def _run_protocol_mode_impl(
     context_audits: list[ContextAudit] = []
     optimization_enabled = bool(
         experiment_profile is not None and experiment_profile.optimization_enabled
+    )
+    quality_safe_candidate = bool(
+        optimization_enabled
+        and experiment_profile is not None
+        and experiment_profile.route_policy_version == "quality_safe_v1"
     )
 
     def budget_context(
@@ -216,6 +226,11 @@ def _run_protocol_mode_impl(
         state_refs=[task_ref],
     )
     decision = _planner_decision(planner_result, task, context.capability_to_agent)
+    if quality_safe_candidate and experiment_profile is not None:
+        decision = decision.for_policy(
+            experiment_profile.route_policy_version,
+            capability_to_agent=context.capability_to_agent,
+        )
     plan_summary = _planner_summary(planner_result)
     planner_direct_answer = _planner_direct_answer(planner_result, decision)
     plan_ref = state_store.put_summary(
@@ -227,6 +242,7 @@ def _run_protocol_mode_impl(
             "llm_used": _non_empty_text(planner_result.result.get("llm_plan")) is not None,
             "full_chars": len(plan_summary),
             "compacted": len(plan_summary) > protocol_budget.state_summary_max_chars,
+            "decision_reason": decision.reason,
         },
     )
     next_agent = "retriever" if decision.need_retrieval else "summarizer"
@@ -261,6 +277,7 @@ def _run_protocol_mode_impl(
     tool_feedback_count = 0
     sandbox_backend = ""
     memory_query_count = 0
+    packed_evidence = _empty_packed_evidence()
 
     if decision.need_retrieval:
         stage_start = time.perf_counter()
@@ -292,6 +309,8 @@ def _run_protocol_mode_impl(
         )
         evidence = list(retriever_result.result["evidence"])
         memory_hits = _memory_units_from_evidence(evidence)
+        if quality_safe_candidate and experiment_profile is not None:
+            packed_evidence = _pack_candidate_evidence(evidence, experiment_profile)
         compact_evidence = _compact_evidence_items(
             evidence,
             snippet_limit=protocol_budget.evidence_snippet_max_chars,
@@ -322,10 +341,14 @@ def _run_protocol_mode_impl(
 
     if decision.need_tool_execution:
         stage_start = time.perf_counter()
-        evidence_digest = _evidence_digest(
-            evidence,
-            snippet_limit=protocol_budget.evidence_snippet_max_chars,
-            max_items=3,
+        evidence_digest = (
+            packed_evidence.digest
+            if quality_safe_candidate
+            else _evidence_digest(
+                evidence,
+                snippet_limit=protocol_budget.evidence_snippet_max_chars,
+                max_items=3,
+            )
         )
         executor_task = (
             budget_context(
@@ -503,6 +526,10 @@ def _run_protocol_mode_impl(
             )
             refined_items = list(refined_evidence_result.result.get("evidence", []))
             evidence.extend(refined_items)
+            if quality_safe_candidate and experiment_profile is not None:
+                packed_evidence = _pack_candidate_evidence(
+                    evidence, experiment_profile
+                )
             refined_evidence_ref = state_store.put_evidence(
                 trace_id=trace_id,
                 producer="retriever",
@@ -532,10 +559,14 @@ def _run_protocol_mode_impl(
         if ref
     ]
     summarizer_source = scheduler.selected_agents[-1] if scheduler.selected_agents else "planner"
-    summarizer_evidence = _evidence_digest(
-        evidence,
-        snippet_limit=protocol_budget.evidence_snippet_max_chars,
-        max_items=3,
+    summarizer_evidence = (
+        packed_evidence.digest
+        if quality_safe_candidate
+        else _evidence_digest(
+            evidence,
+            snippet_limit=protocol_budget.evidence_snippet_max_chars,
+            max_items=3,
+        )
     )
     summarizer_task = (
         budget_context(
@@ -660,7 +691,11 @@ def _run_protocol_mode_impl(
     )
     transport_stats = scheduler.transport_metrics()
     memory_quality = _memory_quality_from_log(paths=paths, trace_id=trace_id)
-    memory_evidence_bytes = _memory_evidence_bytes(evidence)
+    memory_evidence_bytes = (
+        packed_evidence.audit.injected_bytes
+        if quality_safe_candidate
+        else _memory_evidence_bytes(evidence)
+    )
     mark_stage("artifact_write", stage_start)
     latency_ms = int((time.perf_counter() - start) * 1000)
     metrics = RunMetrics(
@@ -699,12 +734,22 @@ def _run_protocol_mode_impl(
         memory_reused_unit_count=len(memory_hits),
         memory_evidence_count=len(memory_hits),
         memory_evidence_bytes=memory_evidence_bytes,
+        evidence_candidate_count=packed_evidence.audit.candidate_count,
+        evidence_accepted_count=packed_evidence.audit.accepted_count,
+        evidence_deduplicated_count=packed_evidence.audit.deduplicated_count,
+        evidence_filtered_count=packed_evidence.audit.filtered_count,
         memory_avg_score=memory_quality["avg_score"],
         memory_avg_semantic_similarity=memory_quality["avg_semantic_similarity"],
         memory_avg_tag_overlap_score=memory_quality["avg_tag_overlap_score"],
         latency_ms=latency_ms,
         stage_latency_ms=stage_latency_ms,
         dynamic_route=scheduler.selected_agents,
+        route_policy_version=(
+            experiment_profile.route_policy_version
+            if experiment_profile is not None
+            else "legacy"
+        ),
+        route_reason=decision.reason,
         selected_agents=list(dict.fromkeys(scheduler.selected_agents)),
         skipped_agents=[
             agent
@@ -734,6 +779,35 @@ def _memory_units_from_evidence(evidence: list[dict[str, Any]]) -> list[str]:
         if isinstance(memory_id, str) and memory_id:
             memory_ids.append(memory_id)
     return list(dict.fromkeys(memory_ids))
+
+
+def _empty_packed_evidence() -> PackedEvidence:
+    return PackedEvidence(
+        digest="",
+        accepted_ids=(),
+        audit=EvidencePackAudit(
+            candidate_count=0,
+            accepted_count=0,
+            deduplicated_count=0,
+            filtered_count=0,
+            injected_bytes=0,
+        ),
+    )
+
+
+def _pack_candidate_evidence(
+    evidence: list[dict[str, Any]],
+    profile: LLMExperimentProfile,
+) -> PackedEvidence:
+    protocol = profile.protocol
+    return pack_evidence(
+        evidence,
+        min_score=protocol.evidence_min_score,
+        max_items=protocol.evidence_max_items,
+        # Evidence is one optional context part and can never consume more than
+        # the retriever's complete candidate context allowance.
+        max_chars=protocol.retriever_max_chars,
+    )
 
 
 def _memory_evidence_bytes(evidence: list[dict[str, Any]]) -> int:

@@ -41,6 +41,10 @@ class RunMetrics(BaseModel):
     memory_reused_unit_count: int = 0
     memory_evidence_count: int = 0
     memory_evidence_bytes: int = 0
+    evidence_candidate_count: int = 0
+    evidence_accepted_count: int = 0
+    evidence_deduplicated_count: int = 0
+    evidence_filtered_count: int = 0
     memory_avg_score: float = 0.0
     memory_avg_semantic_similarity: float = 0.0
     memory_avg_tag_overlap_score: float = 0.0
@@ -50,6 +54,8 @@ class RunMetrics(BaseModel):
     quality_rule_id: str = "unscored"
     quality_passed: bool | None = None
     dynamic_route: list[str] = Field(default_factory=list)
+    route_policy_version: str = ""
+    route_reason: str = ""
     selected_agents: list[str] = Field(default_factory=list)
     skipped_agents: list[str] = Field(default_factory=list)
     feedback_round_count: int = 0

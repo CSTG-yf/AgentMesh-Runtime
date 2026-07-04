@@ -109,6 +109,43 @@ class PlannerDecision(BaseModel):
             }
         )
 
+    def for_policy(
+        self,
+        policy_version: str,
+        capability_to_agent: Mapping[str, str] | None = None,
+    ) -> PlannerDecision:
+        if policy_version != "quality_safe_v1":
+            return self
+        if self.need_tool_execution or self.task_type not in {
+            "chat",
+            "summary_only",
+            "analysis_or_report",
+        }:
+            return self
+        retriever = _agent_for_capability(
+            "memory.semantic_search", capability_to_agent
+        )
+        decision = self.model_copy(
+            update={
+                "required_capabilities": [
+                    capability
+                    for capability in self.required_capabilities
+                    if capability
+                    not in {"memory.semantic_search", "evidence.refine"}
+                ],
+                "execution_route": [
+                    agent
+                    for agent in self.execution_route
+                    if agent not in {"retriever", retriever}
+                ],
+                "need_retrieval": False,
+                "reason": (
+                    f"{self.reason}; quality_safe_v1: retrieval not required"
+                ),
+            }
+        )
+        return decision.normalized(capability_to_agent=capability_to_agent)
+
 
 def _rule_based_policy(task: str) -> PlannerDecision:
     text = re.sub(r"\s+", " ", task.lower()).strip()
