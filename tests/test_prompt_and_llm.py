@@ -96,6 +96,35 @@ def test_default_agent_system_prompts_define_roles_and_boundaries(tmp_path: Path
         assert task_specific not in combined
 
 
+def test_missing_or_empty_prompt_directory_uses_exact_role_contracts(
+    tmp_path: Path,
+) -> None:
+    contracts = {
+        "planner": (
+            "Return intent, required capabilities, route, and one short reason. "
+            "Do not restate the task."
+        ),
+        "retriever": (
+            "Return compact evidence facts with source identity and relevance. "
+            "Do not add general commentary."
+        ),
+        "executor": (
+            "Return only executable code or structured validation observations. "
+            "Do not write the final user answer."
+        ),
+        "summarizer": (
+            "Answer the user directly. Preserve all required facts, computed outputs, "
+            "and validated execution evidence. Do not narrate the agent route."
+        ),
+    }
+    for prompt_dir in (tmp_path / "missing", tmp_path / "empty"):
+        if prompt_dir.name == "empty":
+            prompt_dir.mkdir()
+        store = PromptTemplateStore(prompt_dir)
+        for role, contract in contracts.items():
+            assert contract in store.get(role)
+
+
 def test_openai_compatible_client_builds_masked_chat_request() -> None:
     captured: dict[str, object] = {}
 

@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from agentmesh.prompts.store import _DEFAULT_PROMPTS, PromptTemplateStore
+
 BENCHMARK_SCHEMA_VERSION = "2.0"
 _SECRET_KEYS = {"api_key", "token", "secret", "password", "authorization"}
 
@@ -37,6 +39,7 @@ class ExperimentManifest(BaseModel):
     route_policy_version: str = ""
     model_fingerprint: str = ""
     prompt_tree_sha256: str = ""
+    resolved_prompt_sha256: str = ""
     prompt_directory: str = ""
     prompt_directory_source: Literal["default", "configured"] = "default"
     quality_rules_sha256: str = ""
@@ -60,6 +63,7 @@ def build_experiment_manifest(
     route_policy_version: str = "",
     model_fingerprint: str = "",
     prompt_tree_sha256: str = "",
+    resolved_prompt_sha256: str = "",
     prompt_directory: str = "",
     prompt_directory_source: Literal["default", "configured"] = "default",
     quality_rules_sha256: str = "",
@@ -85,7 +89,7 @@ def build_experiment_manifest(
             route_policy_version,
             model_fingerprint,
             prompt_tree_sha256,
-            prompt_directory,
+            resolved_prompt_sha256,
             prompt_directory_source,
             quality_rules_sha256,
         ]
@@ -107,6 +111,7 @@ def build_experiment_manifest(
         route_policy_version=route_policy_version,
         model_fingerprint=model_fingerprint,
         prompt_tree_sha256=prompt_tree_sha256,
+        resolved_prompt_sha256=resolved_prompt_sha256,
         prompt_directory=prompt_directory,
         prompt_directory_source=prompt_directory_source,
         quality_rules_sha256=quality_rules_sha256,
@@ -127,6 +132,18 @@ def prompt_tree_sha256(prompt_dir: Path) -> str:
             digest.update(b"\0")
             digest.update(path.read_bytes())
             digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def resolved_prompt_sha256(prompt_dir: Path) -> str:
+    """Hash effective built-in-role prompts without storing their text."""
+    digest = hashlib.sha256()
+    store = PromptTemplateStore(prompt_dir)
+    for agent_name in sorted(_DEFAULT_PROMPTS):
+        digest.update(agent_name.encode())
+        digest.update(b"\0")
+        digest.update(store.get(agent_name).encode())
+        digest.update(b"\0")
     return digest.hexdigest()
 
 

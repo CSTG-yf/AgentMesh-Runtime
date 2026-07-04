@@ -1,6 +1,7 @@
 import hashlib
 from pathlib import Path
 
+from agentmesh.eval import experiment
 from agentmesh.eval.experiment import (
     BENCHMARK_SCHEMA_VERSION,
     BenchmarkTrack,
@@ -9,6 +10,7 @@ from agentmesh.eval.experiment import (
     paired_mode_order,
     prompt_tree_sha256,
 )
+from agentmesh.prompts import store as prompt_store
 
 
 def test_manifest_is_stable_and_does_not_contain_secrets(tmp_path: Path) -> None:
@@ -118,3 +120,75 @@ def test_prompt_tree_hash_uses_sorted_markdown_names_and_content(tmp_path: Path)
 
     (tmp_path / "a.md").write_text("changed", encoding="utf-8")
     assert prompt_tree_sha256(tmp_path) != original
+
+
+def test_partial_custom_prompt_identity_includes_fallback_content(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    suite = tmp_path / "suite.yaml"
+    suite.write_text("tasks: []", encoding="utf-8")
+    prompt_dir = tmp_path / "partial"
+    prompt_dir.mkdir()
+    (prompt_dir / "planner.md").write_text("custom planner", encoding="utf-8")
+    first_hash = experiment.resolved_prompt_sha256(prompt_dir)
+    common = dict(
+        suite_path=suite,
+        suite_name="suite",
+        track=BenchmarkTrack.LLM,
+        repeat_count=1,
+        seed=0,
+        prompt_tree_sha256=prompt_tree_sha256(prompt_dir),
+        prompt_directory="partial",
+        prompt_directory_source="configured",
+    )
+    first = build_experiment_manifest(**common, resolved_prompt_sha256=first_hash)
+
+    monkeypatch.setitem(
+        prompt_store._DEFAULT_PROMPTS,
+        "summarizer",
+        prompt_store._DEFAULT_PROMPTS["summarizer"] + " changed",
+    )
+    second_hash = experiment.resolved_prompt_sha256(prompt_dir)
+    second = build_experiment_manifest(**common, resolved_prompt_sha256=second_hash)
+
+    assert first_hash != second_hash
+    assert first.experiment_id != second.experiment_id
+
+
+def test_external_prompt_display_token_is_not_part_of_experiment_identity(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    suite = project_root / "suite.yaml"
+    suite.write_text("tasks: []", encoding="utf-8")
+    prompt_dirs = [tmp_path / "external-a", tmp_path / "external-b"]
+    for prompt_dir in prompt_dirs:
+        prompt_dir.mkdir()
+        (prompt_dir / "planner.md").write_text("same prompt", encoding="utf-8")
+    common = dict(
+        suite_path=suite,
+        suite_name="suite",
+        track=BenchmarkTrack.LLM,
+        repeat_count=1,
+        seed=0,
+        prompt_tree_sha256=prompt_tree_sha256(prompt_dirs[0]),
+        resolved_prompt_sha256=experiment.resolved_prompt_sha256(prompt_dirs[0]),
+        prompt_directory_source="configured",
+    )
+    first = build_experiment_manifest(
+        **common,
+        prompt_directory=experiment.prompt_directory_identity(
+            prompt_dirs[0], project_root
+        ),
+    )
+    second = build_experiment_manifest(
+        **common,
+        prompt_directory=experiment.prompt_directory_identity(
+            prompt_dirs[1], project_root
+        ),
+    )
+
+    assert first.prompt_directory != second.prompt_directory
+    assert first.experiment_id == second.experiment_id

@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from agentmesh.errors import BenchmarkConfigError
 from agentmesh.eval.benchmark import run_benchmark
-from agentmesh.eval.experiment import prompt_tree_sha256
+from agentmesh.eval.experiment import prompt_tree_sha256, resolved_prompt_sha256
 from agentmesh.eval.llm_experiment import (
     LLMExperimentProfile,
     ProtocolOptimizationProfile,
@@ -426,6 +426,7 @@ def test_benchmark_manifest_hashes_active_prompt_directory(
     )
     manifest = orjson.loads(manifest_path.read_bytes())
     assert manifest["prompt_tree_sha256"] == prompt_tree_sha256(prompt_dir)
+    assert manifest["resolved_prompt_sha256"] == resolved_prompt_sha256(prompt_dir)
     assert manifest["prompt_directory"] == prompt_dir.relative_to(tmp_path).as_posix()
     assert manifest["prompt_directory_source"] == (
         "configured" if use_custom_dir else "default"
