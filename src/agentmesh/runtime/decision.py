@@ -128,18 +128,37 @@ class PlannerDecision(BaseModel):
         if (
             policy_version == "quality_safe_v2"
             and task is not None
-            and _is_algorithmic_search(task)
-            and not _has_explicit_external_retrieval_intent(task)
-            and not self.need_tool_execution
-            and (trusted is None or not trusted.need_tool_execution)
+            and _is_algorithmic_search_task(task)
+            and not _has_explicit_retrieval_intent(task)
+            and (
+                trusted is None
+                or trusted.task_type
+                in {
+                    "knowledge_lookup",
+                    "analysis_or_report",
+                    "general",
+                    "code_execution",
+                    "calculation",
+                    "benchmark",
+                }
+            )
         ):
             retriever = _agent_for_capability(
                 "memory.semantic_search", capability_to_agent
             )
+            need_tool_execution = self.need_tool_execution or bool(
+                trusted is not None and trusted.need_tool_execution
+            )
             return self.model_copy(
                 update={
-                    "intent": "analysis",
-                    "task_type": "analysis_or_report",
+                    "intent": (
+                        "validation" if need_tool_execution else "analysis"
+                    ),
+                    "task_type": (
+                        trusted.task_type
+                        if need_tool_execution and trusted is not None
+                        else "analysis_or_report"
+                    ),
                     "required_capabilities": [
                         capability
                         for capability in self.required_capabilities
@@ -152,6 +171,7 @@ class PlannerDecision(BaseModel):
                         if agent not in {"retriever", retriever}
                     ],
                     "need_retrieval": False,
+                    "need_tool_execution": need_tool_execution,
                     "reason": (
                         f"{self.reason}; "
                         "quality_safe_v2: algorithmic search analysis"
@@ -492,57 +512,76 @@ def _is_retrieval_task(text: str) -> bool:
     )
 
 
-def _is_algorithmic_search(text: str) -> bool:
+_ALGORITHM_SEARCH_PATTERN = re.compile(
+    r"\b(?:binary|linear|sequential|interpolation|exponential|"
+    r"ternary|jump|depth[- ]first|breadth[- ]first)\s+search\b"
+    r"|\bsearch\s+algorithms?\b"
+)
+
+
+def _is_algorithmic_search_task(text: str) -> bool:
     normalized = re.sub(r"\s+", " ", text.lower()).strip()
-    return bool(
-        re.search(
-            r"\b(?:binary|linear|sequential|interpolation|exponential|"
-            r"ternary|jump|depth[- ]first|breadth[- ]first)\s+search\b",
-            normalized,
-        )
-        or re.search(r"\bsearch\s+algorithms?\b", normalized)
+    has_algorithm_context = bool(
+        _ALGORITHM_SEARCH_PATTERN.search(normalized)
         or _contains_any(
             normalized,
             ["二分查找", "线性查找", "顺序查找", "搜索算法", "查找算法"],
         )
     )
-
-
-def _has_explicit_external_retrieval_intent(text: str) -> bool:
-    normalized = re.sub(r"\s+", " ", text.lower()).strip()
-    return _contains_any(
-        normalized,
-        [
-            "search memory",
-            "search my notes",
-            "latest",
-            "docs",
-            "documentation",
-            "api",
-            "repository",
-            "repo",
-            "codebase",
-            "find facts",
-            "source",
-            "citation",
-            "web",
-            "internet",
-            "file",
-            "检索记忆",
-            "搜索记忆",
-            "最新",
-            "文档",
-            "接口",
-            "仓库",
-            "代码库",
-            "事实",
-            "来源",
-            "引用",
-            "网页",
-            "互联网",
-            "文件",
-        ],
+    has_algorithm_task = bool(
+        re.search(
+            r"\b(?:compare|analy[sz]e|explain|implement|describe|"
+            r"evaluate|contrast|complexity|performance)\b",
+            normalized,
+        )
+        or _contains_any(
+            normalized,
+            ["比较", "对比", "分析", "解释", "实现", "复杂度", "性能"],
+        )
     )
+    return has_algorithm_context and has_algorithm_task
+
+
+def _has_explicit_retrieval_intent(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text.lower()).strip()
+    without_algorithm_terms = _ALGORITHM_SEARCH_PATTERN.sub(
+        " algorithm ",
+        normalized,
+    )
+    for algorithm_term in [
+        "二分查找",
+        "线性查找",
+        "顺序查找",
+        "搜索算法",
+        "查找算法",
+    ]:
+        without_algorithm_terms = without_algorithm_terms.replace(
+            algorithm_term,
+            " 算法 ",
+        )
+    has_retrieval_action = bool(
+        re.search(
+            r"\b(?:search|find|research|look\s+up|consult|"
+            r"retrieve|query|browse)\b",
+            without_algorithm_terms,
+        )
+        or re.search(r"\buse\b.+\bto\b", without_algorithm_terms)
+        or _contains_any(
+            without_algorithm_terms,
+            ["检索", "查找", "搜索", "查询", "浏览", "查阅", "参考", "使用"],
+        )
+    )
+    has_retrieval_object = bool(
+        re.search(
+            r"\b(?:memory|knowledge|facts?|sources?|evidence|citations?)\b",
+            without_algorithm_terms,
+        )
+        or _contains_any(
+            without_algorithm_terms,
+            ["记忆", "知识", "事实", "来源", "证据", "引用"],
+        )
+    )
+    return has_retrieval_action or has_retrieval_object
 
 
 def _is_report_or_analysis(text: str) -> bool:
