@@ -581,40 +581,7 @@ def _has_explicit_retrieval_intent(text: str) -> bool:
             ["记忆", "知识", "事实", "来源", "证据", "引用"],
         )
     )
-    has_source_attribution = bool(
-        re.search(
-            r"\b(?:according\s+to|based\s+on|per|using|from|"
-            r"supplied\s+by|provided\s+by)\b",
-            normalized,
-        )
-        or re.search(
-            r"\bwith\b.{0,80}\b(?:data|records?|guidance|sources?)\b",
-            normalized,
-        )
-        or re.search(
-            r"\b(?:data|records?|guidance|sources?)\b.{0,80}"
-            r"\b(?:from|supplied\s+by|provided\s+by)\b",
-            normalized,
-        )
-        or _contains_any(
-            normalized,
-            ["根据", "基于", "来自", "引用", "按照", "依照"],
-        )
-        or bool(
-            re.search(
-                r"使用.{0,40}(?:资料|数据|记录|指引|来源)",
-                normalized,
-            )
-        )
-        or bool(
-            re.search(
-                r"(?:资料|数据|记录|指引|来源).{0,40}"
-                r"(?:来自|由.{0,20}提供)",
-                normalized,
-            )
-        )
-    )
-    return has_retrieval_action or has_retrieval_object or has_source_attribution
+    return has_retrieval_action or has_retrieval_object
 
 
 def _is_report_or_analysis(text: str) -> bool:
