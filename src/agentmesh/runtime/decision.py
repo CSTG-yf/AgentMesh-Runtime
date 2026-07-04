@@ -528,18 +528,18 @@ def _is_algorithmic_search_task(text: str) -> bool:
             ["二分查找", "线性查找", "顺序查找", "搜索算法", "查找算法"],
         )
     )
-    has_direct_algorithm_intent = bool(
+    has_algorithm_task = bool(
         re.search(
-            r"^(?:please\s+)?(?:compare|analy[sz]e|explain|implement|"
-            r"describe|evaluate|contrast)\b",
+            r"\b(?:compare|analy[sz]e|explain|implement|describe|"
+            r"evaluate|contrast|complexity|performance)\b",
             normalized,
         )
-        or re.search(
-            r"^(?:请)?(?:比较|对比|分析|解释|实现|描述|评估)",
+        or _contains_any(
             normalized,
+            ["比较", "对比", "分析", "解释", "实现", "复杂度", "性能"],
         )
     )
-    return has_algorithm_context and has_direct_algorithm_intent
+    return has_algorithm_context and has_algorithm_task
 
 
 def _has_explicit_retrieval_intent(text: str) -> bool:
