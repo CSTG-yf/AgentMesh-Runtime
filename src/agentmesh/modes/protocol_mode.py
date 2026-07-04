@@ -100,6 +100,7 @@ def _run_protocol_mode_impl(
     start = time.perf_counter()
     stage_latency_ms: dict[str, int] = {}
     context_audits: list[ContextAudit] = []
+    actual_evidence_bytes = 0
     optimization_enabled = bool(
         experiment_profile is not None and experiment_profile.optimization_enabled
     )
@@ -114,8 +115,15 @@ def _run_protocol_mode_impl(
         max_chars: int,
         parts: list[ContextPart],
     ) -> str:
+        nonlocal actual_evidence_bytes
         packed = pack_context(role=role, max_chars=max_chars, parts=parts)
         context_audits.append(packed.audit)
+        if quality_safe_candidate:
+            actual_evidence_bytes += sum(
+                len(text.encode("utf-8"))
+                for name, text in packed.retained_parts.items()
+                if name in {"evidence", "evidence_digest"}
+            )
         return packed.text
 
     def mark_stage(name: str, stage_start: float) -> None:
@@ -693,7 +701,7 @@ def _run_protocol_mode_impl(
     transport_stats = scheduler.transport_metrics()
     memory_quality = _memory_quality_from_log(paths=paths, trace_id=trace_id)
     memory_evidence_bytes = (
-        packed_evidence.audit.injected_bytes
+        actual_evidence_bytes
         if quality_safe_candidate
         else _memory_evidence_bytes(evidence)
     )

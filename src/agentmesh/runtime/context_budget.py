@@ -28,6 +28,11 @@ class PackedContext(BaseModel):
 
     text: str
     audit: ContextAudit
+    retained_parts: dict[str, str] = Field(
+        default_factory=dict,
+        exclude=True,
+        repr=False,
+    )
 
 
 def pack_context(
@@ -46,6 +51,7 @@ def pack_context(
     required = [part for part in ordered if part.required]
     optional = [part for part in ordered if not part.required]
     retained = [part.text for part in required]
+    retained_parts = {part.name: part.text for part in required}
     included = [part.name for part in required]
     dropped: list[str] = []
     required_text = "\n\n".join(retained)
@@ -62,6 +68,7 @@ def pack_context(
             dropped=dropped,
             partial=[],
             retained_payload_chars=sum(len(part.text) for part in required),
+            retained_parts=retained_parts,
         )
 
     retained_text = required_text
@@ -75,6 +82,7 @@ def pack_context(
             break
         retained_part = part.text[:remaining]
         retained_text += separator + retained_part
+        retained_parts[part.name] = retained_part
         retained_payload_chars += len(retained_part)
         if remaining < len(part.text):
             partial.append(part.name)
@@ -92,6 +100,7 @@ def pack_context(
         dropped=dropped,
         partial=partial,
         retained_payload_chars=retained_payload_chars,
+        retained_parts=retained_parts,
     )
 
 
@@ -106,6 +115,7 @@ def _packed(
     dropped: list[str],
     partial: list[str],
     retained_payload_chars: int | None = None,
+    retained_parts: dict[str, str] | None = None,
 ) -> PackedContext:
     retained_chars = (
         retained_payload_chars
@@ -114,6 +124,7 @@ def _packed(
     )
     return PackedContext(
         text=retained_text,
+        retained_parts=retained_parts or {},
         audit=ContextAudit(
             role=role,
             max_chars=max_chars,

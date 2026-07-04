@@ -14,6 +14,7 @@ from agentmesh.eval.llm_experiment import (
 )
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.llm.client import ChatMessage, InstrumentedLLMClient
+from agentmesh.memory.evidence_pack import EvidencePackAudit, PackedEvidence
 from agentmesh.modes.protocol_mode import run_protocol_mode
 from agentmesh.storage.jsonl import read_jsonl
 from agentmesh.storage.paths import RuntimePaths
@@ -293,6 +294,60 @@ def test_candidate_profile_applies_context_optimization(tmp_path: Path) -> None:
     assert baseline.metrics.context_audits == []
     assert candidate.metrics.context_audits
     assert candidate.metrics.context_safe_fallback_count > 0
+
+
+@pytest.mark.parametrize(
+    ("executor_max_chars", "summarizer_max_chars", "expected_bytes"),
+    [
+        (1, 1, 0),
+        (70, 1, len("证据".encode())),
+        (2400, 2400, 2 * len("证据内容".encode())),
+    ],
+)
+def test_candidate_counts_only_actual_retained_evidence_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    executor_max_chars: int,
+    summarizer_max_chars: int,
+    expected_bytes: int,
+) -> None:
+    task_text = "Run Python code to print 2."
+    task = tmp_path / "task.txt"
+    task.write_text(task_text, encoding="utf-8")
+
+    def fixed_pack(*args: object, **kwargs: object) -> PackedEvidence:
+        del args, kwargs
+        digest = "证据内容"
+        return PackedEvidence(
+            digest=digest,
+            accepted_ids=(),
+            audit=EvidencePackAudit(
+                candidate_count=1,
+                accepted_count=1,
+                deduplicated_count=0,
+                filtered_count=0,
+                injected_bytes=len(digest.encode("utf-8")),
+            ),
+        )
+
+    monkeypatch.setattr("agentmesh.modes.protocol_mode.pack_evidence", fixed_pack)
+    result = run_protocol_mode(
+        task,
+        RuntimePaths(root=tmp_path / f"run-{executor_max_chars}"),
+        load_configured_llm=False,
+        experiment_profile=LLMExperimentProfile(
+            profile_id="candidate",
+            artifact_label="candidate",
+            route_policy_version="quality_safe_v1",
+            optimization_enabled=True,
+            protocol=ProtocolOptimizationProfile(
+                executor_max_chars=executor_max_chars,
+                summarizer_max_chars=summarizer_max_chars,
+            ),
+        ),
+    )
+
+    assert result.metrics.memory_evidence_bytes == expected_bytes
 
 
 def _write_suite(root: Path) -> Path:

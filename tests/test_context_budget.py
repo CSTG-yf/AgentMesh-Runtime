@@ -63,6 +63,28 @@ def test_pack_context_reports_partial_optional_payload_without_separator_chars()
     assert packed.audit.included_parts == ["task"]
     assert packed.audit.partial_parts == ["intent"]
     assert packed.audit.dropped_parts == []
+    assert packed.retained_parts == {"task": "task", "intent": "ab"}
+
+
+def test_pack_context_retained_parts_tracks_dropped_and_unicode_partial_text() -> None:
+    dropped = pack_context(
+        role="executor",
+        max_chars=4,
+        parts=[
+            ContextPart(name="task", text="required", required=True),
+            ContextPart(name="evidence_digest", text="证据"),
+        ],
+    )
+    partial = pack_context(
+        role="executor",
+        max_chars=3,
+        parts=[ContextPart(name="evidence_digest", text="证据内容")],
+    )
+
+    assert dropped.retained_parts == {"task": "required"}
+    assert "证据" not in dropped.audit.model_dump_json()
+    assert partial.retained_parts == {"evidence_digest": "证据内"}
+    assert len(partial.retained_parts["evidence_digest"].encode("utf-8")) == 9
 
 
 def test_pack_context_rejects_duplicate_part_names() -> None:
