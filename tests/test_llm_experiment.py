@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from agentmesh.errors import BenchmarkConfigError
 from agentmesh.eval.benchmark import run_benchmark
+from agentmesh.eval.experiment import prompt_tree_sha256
 from agentmesh.eval.llm_experiment import (
     LLMExperimentProfile,
     ProtocolOptimizationProfile,
@@ -381,3 +382,47 @@ def _write_llm_env(root: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+@pytest.mark.parametrize("use_custom_dir", [False, True])
+def test_benchmark_manifest_hashes_active_prompt_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    use_custom_dir: bool,
+) -> None:
+    suite = _write_suite(tmp_path)
+    _write_llm_env(tmp_path)
+    prompt_dir = tmp_path / ("custom-prompts" if use_custom_dir else "prompts")
+    prompt_dir.mkdir()
+    (prompt_dir / "planner.md").write_text("active prompt", encoding="utf-8")
+    if use_custom_dir:
+        with (tmp_path / ".env").open("a", encoding="utf-8") as env_file:
+            env_file.write(f"\nAGENTMESH_PROMPT_DIR={prompt_dir}\n")
+
+    def result(mode: str) -> ModeRunResult:
+        return ModeRunResult(
+            mode=mode,
+            trace_id=mode,
+            answer="ok",
+            metrics=RunMetrics(llm_call_count=1),
+        )
+
+    monkeypatch.setattr(
+        "agentmesh.eval.benchmark.run_text_mode", lambda **_: result("text")
+    )
+    monkeypatch.setattr(
+        "agentmesh.eval.benchmark.run_protocol_mode", lambda **_: result("protocol")
+    )
+    profile = LLMExperimentProfile(
+        profile_id="active-prompts",
+        artifact_label="active-prompts",
+        repeat=1,
+    )
+
+    run_benchmark(suite, RuntimePaths(root=tmp_path), profile=profile)
+
+    manifest_path = RuntimePaths(root=tmp_path).benchmark_suite_manifest(
+        "profile_suite", "llm", "active-prompts"
+    )
+    manifest = orjson.loads(manifest_path.read_bytes())
+    assert manifest["prompt_tree_sha256"] == prompt_tree_sha256(prompt_dir)

@@ -77,6 +77,12 @@ def test_protocol_mode_uses_llm_outputs_as_agent_state(tmp_path: Path) -> None:
     assert executor_results[0]["executor_result"]["llm_generated_code"] is True
     assert executor_results[0]["codeact"]["stdout"].strip() == "executor model response"
     assert executor_results[0]["codeact"]["exit_code"] == 0
+    calls = {str(call["agent_name"]): call for call in llm_client.calls}
+    executor_system = calls["executor"]["messages"][0].content
+    summarizer_system = calls["summarizer"]["messages"][0].content
+    assert "Do not write the final user answer." in executor_system
+    assert "Answer the user directly." in summarizer_system
+    assert "required facts" in summarizer_system
 
 
 def test_protocol_mode_continues_when_sandbox_times_out(

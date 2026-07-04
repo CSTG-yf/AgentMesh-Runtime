@@ -64,22 +64,36 @@ def test_prompt_template_store_loads_custom_agent_prompt(tmp_path: Path) -> None
 
 
 def test_default_agent_system_prompts_define_roles_and_boundaries(tmp_path: Path) -> None:
-    store = PromptTemplateStore.from_project_root(tmp_path)
+    store = PromptTemplateStore.from_project_root(Path(__file__).parents[1])
 
     planner = store.render("planner", {"task": "compare text and protocol agents"})
     retriever = store.render("retriever", {"query": "memory reuse"})
     executor = store.render("executor", {"input": "validate evidence"})
     summarizer = store.render("summarizer", {"input": "state://summary/abc"})
 
-    assert "user intent recognition" in planner
-    assert "classify the task intent" in planner
-    assert "structured plan" in planner
-    assert "reusable memory" in retriever
-    assert "evidence" in retriever
-    assert "Return only Python code" in executor
-    assert "sandbox" in executor
-    assert "state references" in summarizer
-    assert "memory-worthy" in summarizer
+    assert (
+        "Return intent, required capabilities, route, and one short reason. "
+        "Do not restate the task."
+    ) in planner
+    assert (
+        "Return compact evidence facts with source identity and relevance. "
+        "Do not add general commentary."
+    ) in retriever
+    assert (
+        "Return only executable code or structured validation observations. "
+        "Do not write the final user answer."
+    ) in executor
+    assert (
+        "Answer the user directly. Preserve all required facts, computed outputs, "
+        "and validated execution evidence. Do not narrate the agent route."
+    ) in summarizer
+    assert "required facts" in summarizer
+    assert "Do not write the final user answer." in executor
+    assert "Answer the user directly." in summarizer
+
+    combined = "\n".join((planner, retriever, executor, summarizer))
+    for task_specific in ("[1, 2, 3, 4, 5]", "sum 77", "even count 5"):
+        assert task_specific not in combined
 
 
 def test_openai_compatible_client_builds_masked_chat_request() -> None:

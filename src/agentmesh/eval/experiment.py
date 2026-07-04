@@ -114,7 +114,7 @@ def model_fingerprint(base_url: str, model: str) -> str:
 def prompt_tree_sha256(prompt_dir: Path) -> str:
     digest = hashlib.sha256()
     if prompt_dir.exists():
-        for path in sorted(item for item in prompt_dir.rglob("*") if item.is_file()):
+        for path in sorted(item for item in prompt_dir.rglob("*.md") if item.is_file()):
             digest.update(path.relative_to(prompt_dir).as_posix().encode())
             digest.update(b"\0")
             digest.update(path.read_bytes())

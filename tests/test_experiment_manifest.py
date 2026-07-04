@@ -98,3 +98,18 @@ def test_prompt_tree_hash_is_stable(tmp_path: Path) -> None:
     first = prompt_tree_sha256(tmp_path)
     (tmp_path / "b.md").write_text("two", encoding="utf-8")
     assert first != prompt_tree_sha256(tmp_path)
+
+
+def test_prompt_tree_hash_uses_sorted_markdown_names_and_content(tmp_path: Path) -> None:
+    (tmp_path / "b.md").write_bytes(b"two")
+    (tmp_path / "a.md").write_bytes(b"one")
+    expected = hashlib.sha256(b"a.md\0one\0b.md\0two\0").hexdigest()
+
+    assert prompt_tree_sha256(tmp_path) == expected
+
+    original = prompt_tree_sha256(tmp_path)
+    (tmp_path / "notes.txt").write_text("not a prompt", encoding="utf-8")
+    assert prompt_tree_sha256(tmp_path) == original
+
+    (tmp_path / "a.md").write_text("changed", encoding="utf-8")
+    assert prompt_tree_sha256(tmp_path) != original
