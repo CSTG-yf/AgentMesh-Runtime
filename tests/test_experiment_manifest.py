@@ -85,6 +85,8 @@ def test_profile_fields_are_part_of_manifest_identity(tmp_path: Path) -> None:
         route_policy_version="legacy",
         model_fingerprint=model_fingerprint("https://example.test/v1", "model"),
         prompt_tree_sha256="b" * 64,
+        prompt_directory="prompts",
+        prompt_directory_source="default",
         quality_rules_sha256="c" * 64,
     )
     first = build_experiment_manifest(**common)
@@ -109,6 +111,9 @@ def test_prompt_tree_hash_uses_sorted_markdown_names_and_content(tmp_path: Path)
 
     original = prompt_tree_sha256(tmp_path)
     (tmp_path / "notes.txt").write_text("not a prompt", encoding="utf-8")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "ignored.md").write_text("not active", encoding="utf-8")
     assert prompt_tree_sha256(tmp_path) == original
 
     (tmp_path / "a.md").write_text("changed", encoding="utf-8")

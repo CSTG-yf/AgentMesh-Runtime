@@ -426,3 +426,8 @@ def test_benchmark_manifest_hashes_active_prompt_directory(
     )
     manifest = orjson.loads(manifest_path.read_bytes())
     assert manifest["prompt_tree_sha256"] == prompt_tree_sha256(prompt_dir)
+    assert manifest["prompt_directory"] == prompt_dir.relative_to(tmp_path).as_posix()
+    assert manifest["prompt_directory_source"] == (
+        "configured" if use_custom_dir else "default"
+    )
+    assert str(tmp_path) not in manifest_path.read_text(encoding="utf-8")

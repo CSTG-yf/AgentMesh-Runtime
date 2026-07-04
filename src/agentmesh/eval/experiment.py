@@ -37,6 +37,8 @@ class ExperimentManifest(BaseModel):
     route_policy_version: str = ""
     model_fingerprint: str = ""
     prompt_tree_sha256: str = ""
+    prompt_directory: str = ""
+    prompt_directory_source: Literal["default", "configured"] = "default"
     quality_rules_sha256: str = ""
     status: Literal["in_progress", "failed", "complete"] = "in_progress"
     completed_pairs: int = 0
@@ -58,6 +60,8 @@ def build_experiment_manifest(
     route_policy_version: str = "",
     model_fingerprint: str = "",
     prompt_tree_sha256: str = "",
+    prompt_directory: str = "",
+    prompt_directory_source: Literal["default", "configured"] = "default",
     quality_rules_sha256: str = "",
 ) -> ExperimentManifest:
     suite_sha256 = hashlib.sha256(suite_path.read_bytes()).hexdigest()
@@ -81,6 +85,8 @@ def build_experiment_manifest(
             route_policy_version,
             model_fingerprint,
             prompt_tree_sha256,
+            prompt_directory,
+            prompt_directory_source,
             quality_rules_sha256,
         ]
     )
@@ -101,6 +107,8 @@ def build_experiment_manifest(
         route_policy_version=route_policy_version,
         model_fingerprint=model_fingerprint,
         prompt_tree_sha256=prompt_tree_sha256,
+        prompt_directory=prompt_directory,
+        prompt_directory_source=prompt_directory_source,
         quality_rules_sha256=quality_rules_sha256,
     )
 
@@ -114,12 +122,21 @@ def model_fingerprint(base_url: str, model: str) -> str:
 def prompt_tree_sha256(prompt_dir: Path) -> str:
     digest = hashlib.sha256()
     if prompt_dir.exists():
-        for path in sorted(item for item in prompt_dir.rglob("*.md") if item.is_file()):
-            digest.update(path.relative_to(prompt_dir).as_posix().encode())
+        for path in sorted(prompt_dir.glob("*.md")):
+            digest.update(path.name.encode())
             digest.update(b"\0")
             digest.update(path.read_bytes())
             digest.update(b"\0")
     return digest.hexdigest()
+
+
+def prompt_directory_identity(prompt_dir: Path, project_root: Path) -> str:
+    resolved_dir = prompt_dir.resolve()
+    try:
+        return resolved_dir.relative_to(project_root.resolve()).as_posix()
+    except ValueError:
+        fingerprint = hashlib.sha256(str(resolved_dir).encode()).hexdigest()[:16]
+        return f"external:{fingerprint}"
 
 
 def paired_mode_order(*, seed: int, pair_index: int) -> tuple[str, str]:

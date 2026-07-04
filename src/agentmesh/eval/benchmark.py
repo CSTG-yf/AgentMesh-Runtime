@@ -21,6 +21,7 @@ from agentmesh.eval.experiment import (
     build_experiment_manifest,
     model_fingerprint,
     paired_mode_order,
+    prompt_directory_identity,
     prompt_tree_sha256,
 )
 from agentmesh.eval.llm_experiment import LLMExperimentProfile
@@ -219,6 +220,10 @@ def _run_benchmark_impl(
             runtime_config.llm.base_url or "", runtime_config.llm.model or ""
         ),
         prompt_tree_sha256=prompt_tree_sha256(prompt_dir),
+        prompt_directory=prompt_directory_identity(prompt_dir, paths.root),
+        prompt_directory_source=(
+            "configured" if runtime_config.prompt_dir is not None else "default"
+        ),
         quality_rules_sha256=quality_rules_hash,
     ).model_copy(update={"expected_pairs": repeat * len(tasks)})
     variant = profile.artifact_label if profile else None
