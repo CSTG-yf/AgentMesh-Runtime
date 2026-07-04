@@ -13,6 +13,7 @@ from agentmesh.core import rust_available
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.compare import run_prompt_compare, run_protocol_with_progress
 from agentmesh.eval.dashboard import generate_dashboard
+from agentmesh.eval.llm_comparison import compare_llm_artifacts
 from agentmesh.eval.report import generate_report
 from agentmesh.memory.hybrid_store import HybridMemoryStore
 from agentmesh.memory.maintenance import MemoryMaintenanceConfig, MemoryMaintenanceWorker
@@ -30,6 +31,7 @@ from agentmesh.shell.render import (
     render_compare_progress,
     render_config,
     render_help,
+    render_llm_comparison,
     render_memory,
     render_path,
 )
@@ -104,6 +106,9 @@ class ShellSession:
             return True
         if name == "benchmark":
             self._benchmark(command.args)
+            return True
+        if name == "benchmark-compare":
+            self._benchmark_compare(command.args)
             return True
         if name == "memory":
             self._memory(command.args)
@@ -219,6 +224,22 @@ class ShellSession:
             track=summary.track.value,
             report_path=report_path,
         )
+
+    def _benchmark_compare(self, args: list[str]) -> None:
+        if len(args) != 3:
+            self.console.print(
+                "[red]Usage:[/red] "
+                "/benchmark-compare <suite> <baseline> <candidate>"
+            )
+            return
+        suite_name, baseline_variant, candidate_variant = args
+        result = compare_llm_artifacts(
+            self.paths,
+            suite_name=suite_name,
+            baseline_variant=baseline_variant,
+            candidate_variant=candidate_variant,
+        )
+        render_llm_comparison(self.console, result)
 
     def _dashboard(self, args: list[str]) -> None:
         if len(args) > 1:

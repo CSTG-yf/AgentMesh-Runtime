@@ -10,6 +10,7 @@ from rich.text import Text
 
 from agentmesh.eval.benchmark import BenchmarkProgressEvent, BenchmarkSummary
 from agentmesh.eval.compare import CompareAgentOutput, CompareProgressEvent, CompareSummary
+from agentmesh.eval.llm_comparison import LLMComparisonResult
 from agentmesh.memory.schema import MemoryUnit
 from agentmesh.memory.search import MemorySearchResult
 from agentmesh.storage.paths import RuntimePaths
@@ -44,6 +45,11 @@ def render_help(console: Console) -> None:
             "运行展示型 A/B/C 套件，包含 warm reuse 与 cold baseline",
         ),
         ("/benchmark", "/benchmark [--no-llm] <suite.yaml>", "运行自定义 YAML 评测套件"),
+        (
+            "/benchmark-compare",
+            "/benchmark-compare <suite> <baseline> <candidate>",
+            "对比带质量门禁的 LLM 基线与候选实验",
+        ),
         ("/memory", "/memory --keyword|--tag|--semantic <query>", "检索共享记忆"),
         ("/trace", "/trace [limit]", "查看最近通信 trace"),
         ("/report", "/report", "生成实验报告"),
@@ -53,6 +59,50 @@ def render_help(console: Console) -> None:
     for row in rows:
         table.add_row(*row)
     console.print(table)
+
+
+def render_llm_comparison(
+    console: Console,
+    result: LLMComparisonResult,
+) -> None:
+    table = Table(title="LLM baseline/candidate comparison", show_lines=True)
+    table.add_column("Gate or metric")
+    table.add_column("Result")
+    table.add_row("compatible", "PASS" if result.compatible else "FAIL")
+    table.add_row("quality gate", "PASS" if result.quality_gate_passed else "FAIL")
+    table.add_row(
+        "efficiency gate", "PASS" if result.efficiency_gate_passed else "FAIL"
+    )
+    table.add_row(
+        "quality mean delta", f"{result.protocol_quality_mean_delta:+.6f}"
+    )
+    table.add_row(
+        "quality pass-rate delta",
+        f"{result.protocol_quality_pass_rate_delta:+.6f}",
+    )
+    table.add_row(
+        "token reduction",
+        _comparison_rate(result.protocol_token_reduction_rate),
+    )
+    table.add_row(
+        "latency p50 reduction",
+        _comparison_rate(result.protocol_latency_p50_reduction_rate),
+    )
+    table.add_row(
+        "latency p95 reduction",
+        _comparison_rate(result.protocol_latency_p95_reduction_rate),
+    )
+    console.print(table)
+    if result.efficiency_claim_allowed:
+        console.print("[bold green]efficiency improvement accepted[/bold green]")
+    else:
+        console.print("[bold red]efficiency claim blocked[/bold red]")
+    for reason in result.reasons:
+        console.print(f"- {reason}", markup=False)
+
+
+def _comparison_rate(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.2%}"
 
 
 def render_compare(console: Console, summary: CompareSummary) -> None:

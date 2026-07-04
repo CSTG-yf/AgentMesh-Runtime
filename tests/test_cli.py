@@ -4,6 +4,7 @@ import orjson
 from typer.testing import CliRunner
 
 from agentmesh.cli import app
+from agentmesh.eval.llm_comparison import LLMComparisonResult
 
 
 def test_config_masks_api_key(tmp_path: Path) -> None:
@@ -57,3 +58,43 @@ def test_profile_cannot_be_combined_with_no_llm(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert "--profile cannot be combined with --no-llm" in result.stdout
+
+
+def test_benchmark_compare_prints_machine_readable_gate_result(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "agentmesh.cli.compare_llm_artifacts",
+        lambda *_args, **_kwargs: LLMComparisonResult(
+            compatible=True,
+            quality_gate_passed=False,
+            efficiency_gate_passed=True,
+            efficiency_claim_allowed=False,
+            protocol_quality_mean_delta=-0.1,
+            protocol_quality_pass_rate_delta=0,
+            protocol_token_reduction_rate=0.3,
+            protocol_latency_p50_reduction_rate=0.2,
+            protocol_latency_p95_reduction_rate=0.1,
+            reasons=["quality mean regressed"],
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "benchmark-compare",
+            "--suite",
+            "continuous_tasks",
+            "--baseline",
+            "p3-baseline",
+            "--candidate",
+            "p3-candidate",
+            "--root",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = orjson.loads(result.stdout)
+    assert payload["efficiency_claim_allowed"] is False
+    assert payload["reasons"] == ["quality mean regressed"]

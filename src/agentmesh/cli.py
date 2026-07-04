@@ -12,6 +12,7 @@ from agentmesh.encoding import configure_utf8_environment
 from agentmesh.eval.benchmark import run_benchmark
 from agentmesh.eval.compare import run_prompt_compare
 from agentmesh.eval.dashboard import generate_dashboard
+from agentmesh.eval.llm_comparison import compare_llm_artifacts
 from agentmesh.eval.llm_experiment import load_llm_experiment_profile
 from agentmesh.eval.report import generate_report
 from agentmesh.memory.hybrid_store import HybridMemoryStore
@@ -131,6 +132,26 @@ def benchmark(
         variant=summary.artifact_variant or None,
         report_path=report_path,
     )
+
+
+@app.command("benchmark-compare")
+def benchmark_compare(
+    suite: Annotated[str, typer.Option(help="Benchmark suite name.")],
+    baseline: Annotated[str, typer.Option(help="Baseline artifact variant.")],
+    candidate: Annotated[str, typer.Option(help="Candidate artifact variant.")],
+    root: Annotated[Path, typer.Option(help="Project root.")] = DEFAULT_ROOT,
+) -> None:
+    try:
+        result = compare_llm_artifacts(
+            RuntimePaths(root=root),
+            suite_name=suite,
+            baseline_variant=baseline,
+            candidate_variant=candidate,
+        )
+    except Exception as exc:
+        console.print(f"[red]agentmesh benchmark-compare failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    _print_json(result.model_dump(mode="json"))
 
 
 @app.command()

@@ -5,6 +5,7 @@ from rich.console import Console
 from agentmesh.eval.benchmark import BenchmarkProgressEvent, BenchmarkSummary
 from agentmesh.eval.compare import CompareAgentOutput, CompareSummary
 from agentmesh.eval.experiment import BenchmarkTrack
+from agentmesh.eval.llm_comparison import LLMComparisonResult
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics
 from agentmesh.eval.statistics import DistributionStats
 from agentmesh.memory.schema import MemoryUnit
@@ -36,6 +37,37 @@ def test_shell_parser_handles_slash_command_arguments() -> None:
     assert command is not None
     assert command.name == "compare"
     assert command.args == ["--llm", "中文 Agent 任务"]
+
+
+def test_shell_benchmark_compare_renders_failed_gate(tmp_path, monkeypatch) -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=140)
+    session = ShellSession(paths=RuntimePaths(root=tmp_path), console=console)
+    monkeypatch.setattr(
+        "agentmesh.shell.session.compare_llm_artifacts",
+        lambda *_args, **_kwargs: LLMComparisonResult(
+            compatible=True,
+            quality_gate_passed=False,
+            efficiency_gate_passed=True,
+            efficiency_claim_allowed=False,
+            protocol_quality_mean_delta=-0.1,
+            protocol_quality_pass_rate_delta=0,
+            protocol_token_reduction_rate=0.3,
+            protocol_latency_p50_reduction_rate=0.2,
+            protocol_latency_p95_reduction_rate=0.1,
+            reasons=["quality mean regressed"],
+        ),
+    )
+
+    assert session.handle_line(
+        "/benchmark-compare continuous_tasks p3-baseline p3-candidate"
+    )
+
+    rendered = output.getvalue()
+    assert "quality gate" in rendered
+    assert "FAIL" in rendered
+    assert "quality mean regressed" in rendered
+    assert "efficiency improvement" not in rendered
 
 
 def test_agentshell_core_command_surface_remains_available(tmp_path) -> None:
