@@ -4,27 +4,27 @@ import csv
 from pathlib import Path
 
 import orjson
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agentmesh.eval.experiment import BenchmarkTrack, ExperimentManifest
 from agentmesh.storage.paths import RuntimePaths
 
 
 class LLMExperimentResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, allow_inf_nan=False)
 
     profile_id: str
     suite_sha256: str
     model_fingerprint: str
     quality_rules_sha256: str
-    repeat_count: int
-    text_quality_mean: float
-    text_quality_pass_rate: float
-    protocol_quality_mean: float
-    protocol_quality_pass_rate: float
-    protocol_token_mean: float
-    protocol_latency_p50: float
-    protocol_latency_p95: float
+    repeat_count: int = Field(gt=0)
+    text_quality_mean: float = Field(ge=0.0, le=1.0)
+    text_quality_pass_rate: float = Field(ge=0.0, le=1.0)
+    protocol_quality_mean: float = Field(ge=0.0, le=1.0)
+    protocol_quality_pass_rate: float = Field(ge=0.0, le=1.0)
+    protocol_token_mean: float = Field(ge=0.0)
+    protocol_latency_p50: float = Field(ge=0.0)
+    protocol_latency_p95: float = Field(ge=0.0)
 
 
 class LLMComparisonResult(BaseModel):

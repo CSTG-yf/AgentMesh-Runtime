@@ -3,6 +3,7 @@ from pathlib import Path
 
 import orjson
 import pytest
+from pydantic import ValidationError
 
 from agentmesh.eval.experiment import BenchmarkTrack, ExperimentManifest
 from agentmesh.eval.llm_comparison import (
@@ -130,6 +131,83 @@ def test_efficiency_guard_requires_lower_tokens_and_safe_latency() -> None:
     )
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "text_quality_mean",
+        "text_quality_pass_rate",
+        "protocol_quality_mean",
+        "protocol_quality_pass_rate",
+        "protocol_token_mean",
+        "protocol_latency_p50",
+        "protocol_latency_p95",
+    ],
+)
+def test_typed_experiment_rejects_non_finite_metrics(
+    field: str, value: float
+) -> None:
+    with pytest.raises(ValidationError, match=field):
+        _experiment(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("text_quality_mean", -0.01),
+        ("text_quality_pass_rate", 1.01),
+        ("protocol_quality_mean", 1.01),
+        ("protocol_quality_pass_rate", -0.01),
+        ("protocol_token_mean", -1),
+        ("protocol_latency_p50", -1),
+        ("protocol_latency_p95", -1),
+    ],
+)
+def test_typed_experiment_rejects_out_of_range_metrics(
+    field: str, value: float
+) -> None:
+    with pytest.raises(ValidationError, match=field):
+        _experiment(**{field: value})
+
+
+def test_typed_experiment_allows_zero_token_and_latency_metrics() -> None:
+    result = _experiment(
+        protocol_token_mean=0,
+        protocol_latency_p50=0,
+        protocol_latency_p95=0,
+    )
+
+    assert result.protocol_token_mean == 0
+    assert result.protocol_latency_p50 == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("protocol_quality_mean", "nan"),
+        ("text_quality_pass_rate", "inf"),
+        ("protocol_token_stats", '{"mean":-Infinity}'),
+        ("protocol_latency_stats", '{"p50":-1,"p95":390}'),
+    ],
+)
+def test_loader_rejects_invalid_metrics(
+    tmp_path: Path, field: str, invalid: str
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    artifact_dir = _write_complete_artifacts(paths)
+    summary_path = artifact_dir / "benchmark_summary.csv"
+    with summary_path.open("r", encoding="utf-8", newline="") as file:
+        row = list(csv.DictReader(file))[0]
+    row[field] = invalid
+    with summary_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(row))
+        writer.writeheader()
+        writer.writerow(row)
+
+    with pytest.raises((ValueError, ValidationError), match="finite|greater|invalid"):
+        load_llm_experiment_result(paths, "continuous_tasks", "candidate")
+
+
 def test_loader_rejects_incomplete_manifest(tmp_path: Path) -> None:
     paths = RuntimePaths(root=tmp_path)
     artifact_dir = paths.benchmark_suite_dir(
@@ -163,6 +241,16 @@ def test_loader_rejects_incomplete_manifest(tmp_path: Path) -> None:
 
 def test_loader_reads_complete_typed_artifacts(tmp_path: Path) -> None:
     paths = RuntimePaths(root=tmp_path)
+    _write_complete_artifacts(paths)
+
+    result = load_llm_experiment_result(paths, "continuous_tasks", "candidate")
+
+    assert result.profile_id == "candidate"
+    assert result.protocol_token_mean == 70
+    assert result.protocol_latency_p95 == 390
+
+
+def _write_complete_artifacts(paths: RuntimePaths) -> Path:
     artifact_dir = paths.benchmark_suite_dir(
         "continuous_tasks", track="llm", variant="candidate"
     )
@@ -219,8 +307,4 @@ def test_loader_reads_complete_typed_artifacts(tmp_path: Path) -> None:
             }
         )
 
-    result = load_llm_experiment_result(paths, "continuous_tasks", "candidate")
-
-    assert result.profile_id == "candidate"
-    assert result.protocol_token_mean == 70
-    assert result.protocol_latency_p95 == 390
+    return artifact_dir
