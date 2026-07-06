@@ -1084,6 +1084,21 @@ def _compact_evidence_items(
             compact_item["memory_id"] = memory_id
         if "memory_score" in item:
             compact_item["memory_score"] = item.get("memory_score")
+        source_agent = item.get("source_agent")
+        if isinstance(source_agent, str) and source_agent:
+            compact_item["source_agent"] = _compact_text(source_agent, 80)
+        provenance_trace_id = item.get("provenance_trace_id")
+        if isinstance(provenance_trace_id, str) and provenance_trace_id:
+            compact_item["provenance_trace_id"] = _compact_text(
+                provenance_trace_id, 160
+            )
+        evidence_refs = item.get("evidence_refs")
+        if isinstance(evidence_refs, list):
+            compact_item["evidence_refs"] = [
+                _compact_text(ref, 240)
+                for value in evidence_refs[:3]
+                if isinstance(value, str) and (ref := value.strip())
+            ]
         compacted.append(compact_item)
     return compacted
 

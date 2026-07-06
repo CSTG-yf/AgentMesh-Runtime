@@ -53,3 +53,28 @@ def test_pack_evidence_tracks_unicode_bytes_and_honors_item_and_char_limits() ->
     assert packed.audit.accepted_count == 1
     assert packed.audit.injected_bytes == len(packed.digest.encode("utf-8"))
     assert packed.audit.injected_bytes > len(packed.digest)
+
+
+def test_pack_evidence_preserves_compact_provenance_within_char_limit() -> None:
+    packed = pack_evidence(
+        [
+            {
+                "memory_id": "memory-1",
+                "title": "prior result",
+                "snippet": "validated fact",
+                "score": 0.9,
+                "source_agent": "summarizer",
+                "provenance_trace_id": "trace-prior",
+                "evidence_refs": ["state://evidence/prior-1"],
+            }
+        ],
+        min_score=0,
+        max_items=1,
+        max_chars=180,
+    )
+
+    assert "source=summarizer" in packed.digest
+    assert "trace=trace-prior" in packed.digest
+    assert "refs=state://evidence/prior-1" in packed.digest
+    assert len(packed.digest) <= 180
+    assert packed.audit.injected_bytes == len(packed.digest.encode("utf-8"))

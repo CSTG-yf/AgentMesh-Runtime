@@ -99,4 +99,24 @@ def _evidence_line(item: dict[str, Any]) -> str:
     memory_id = str(item.get("memory_id") or "evidence").strip()
     title = " ".join(str(item.get("title") or "evidence").split())
     snippet = " ".join(str(item.get("snippet") or "").split())
-    return f"[{memory_id}] {title} (score={_score(item):.3f}): {snippet}"
+    attributes = [f"score={_score(item):.3f}"]
+    source_agent = _compact_value(item.get("source_agent"))
+    if source_agent:
+        attributes.append(f"source={source_agent}")
+    trace_id = _compact_value(item.get("provenance_trace_id"))
+    if trace_id:
+        attributes.append(f"trace={trace_id}")
+    evidence_refs = item.get("evidence_refs")
+    if isinstance(evidence_refs, list):
+        refs = [
+            compact
+            for value in evidence_refs[:3]
+            if (compact := _compact_value(value))
+        ]
+        if refs:
+            attributes.append(f"refs={','.join(refs)}")
+    return f"[{memory_id}] {title} ({'; '.join(attributes)}): {snippet}"
+
+
+def _compact_value(value: object, limit: int = 160) -> str:
+    return " ".join(str(value or "").split())[:limit]

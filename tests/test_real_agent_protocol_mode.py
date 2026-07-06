@@ -7,8 +7,12 @@ from agentmesh.eval.llm_experiment import (
     ProtocolOptimizationProfile,
 )
 from agentmesh.llm.client import ChatMessage, LLMClient
+from agentmesh.memory.hybrid_store import HybridMemoryStore
+from agentmesh.memory.schema import MemoryUnit
 from agentmesh.modes.protocol_mode import run_protocol_mode
+from agentmesh.runtime.registry import RuntimeContext
 from agentmesh.sandbox.runner import SandboxResult, SandboxRunner
+from agentmesh.state.embedding import create_embedding_encoder
 from agentmesh.state.schema import StateType
 from agentmesh.state.store import StateStore
 from agentmesh.storage.jsonl import read_jsonl
@@ -254,6 +258,84 @@ def test_candidate_direct_retrieval_keeps_route_without_retriever_llm(
     assert "retriever" not in called_agents
     assert "planner" in called_agents
     assert "summarizer" in called_agents
+
+
+def test_candidate_direct_retrieval_preserves_provenance_downstream(
+    tmp_path: Path,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Remember my preferred editor.", encoding="utf-8")
+    paths = RuntimePaths(root=tmp_path / "candidate-v2-provenance")
+    state_store = StateStore(paths)
+    context = RuntimeContext.from_paths(
+        paths=paths,
+        trace_id="seed-trace",
+        load_configured_llm=False,
+    )
+    encoder = create_embedding_encoder(context.config.embedding)
+    source_evidence_ref = state_store.put_evidence(
+        trace_id="trace-prior",
+        producer="summarizer",
+        evidence=[{"title": "preference", "snippet": "Editor is Vim."}],
+    )
+    memory_store = HybridMemoryStore(
+        paths=paths,
+        state_store=state_store,
+        encoder=encoder,
+    )
+    memory_store.put(
+        MemoryUnit(
+            source_agent="summarizer",
+            task_topic="preferred editor",
+            summary="The preferred editor is Vim.",
+            tags=["preference"],
+            evidence_refs=[source_evidence_ref],
+            state_refs=[],
+            embedding_vector=encoder.encode("preferred editor Vim"),
+            confidence=0.9,
+            validity_score=1.0,
+            provenance_trace_id="trace-prior",
+        )
+    )
+
+    result = run_protocol_mode(
+        task_path=task,
+        paths=paths,
+        llm_client=AgentEchoLLMClient(),
+        experiment_profile=LLMExperimentProfile(
+            profile_id="candidate-v2-provenance",
+            artifact_label="candidate-v2-provenance",
+            route_policy_version="quality_safe_v1",
+            optimization_enabled=True,
+            protocol=ProtocolOptimizationProfile(
+                deterministic_retrieval_evidence=True,
+            ),
+        ),
+    )
+
+    summarizer_rows = [
+        row
+        for row in read_jsonl(paths.protocol_agent_io)
+        if row["input"]["action"] == "summary.create"
+    ]
+    assert "source=summarizer" in summarizer_rows[0]["input"]["params"]["task"]
+    assert "trace=trace-prior" in summarizer_rows[0]["input"]["params"]["task"]
+    assert source_evidence_ref in summarizer_rows[0]["input"]["params"]["task"]
+
+    evidence_payloads = [
+        StateStore(paths).get(record.ref)[1]
+        for record in StateStore(paths).list_by_trace(result.trace_id)
+        if record.state_type == StateType.EVIDENCE
+    ]
+    memory_evidence = next(
+        item
+        for payload in evidence_payloads
+        for item in payload
+        if item.get("memory_id")
+    )
+    assert memory_evidence["source_agent"] == "summarizer"
+    assert memory_evidence["provenance_trace_id"] == "trace-prior"
+    assert memory_evidence["evidence_refs"] == [source_evidence_ref]
 
 
 def test_candidate_budgets_planner_and_evidence_refinement_contexts(

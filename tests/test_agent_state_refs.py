@@ -217,6 +217,29 @@ def test_deterministic_retriever_returns_empty_evidence_without_hit(
     assert result.result["evidence"] == []
 
 
+def test_compact_evidence_state_preserves_memory_provenance() -> None:
+    from agentmesh.modes.protocol_mode import _compact_evidence_items
+
+    compacted = _compact_evidence_items(
+        [
+            {
+                "title": "prior result",
+                "snippet": "validated output",
+                "memory_id": "memory-1",
+                "memory_score": 0.9,
+                "source_agent": "summarizer",
+                "provenance_trace_id": "trace-prior",
+                "evidence_refs": ["state://evidence/prior-1"],
+            }
+        ],
+        snippet_limit=80,
+    )
+
+    assert compacted[0]["source_agent"] == "summarizer"
+    assert compacted[0]["provenance_trace_id"] == "trace-prior"
+    assert compacted[0]["evidence_refs"] == ["state://evidence/prior-1"]
+
+
 def test_default_retriever_still_calls_llm(tmp_path: Path) -> None:
     client = CapturingLLM("rewritten evidence")
     context = RuntimeContext.from_paths(
