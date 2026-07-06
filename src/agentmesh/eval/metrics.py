@@ -43,6 +43,7 @@ class RunMetrics(BaseModel):
     memory_evidence_bytes: int = 0
     evidence_candidate_count: int = 0
     evidence_accepted_count: int = 0
+    evidence_partial_count: int = 0
     evidence_deduplicated_count: int = 0
     evidence_filtered_count: int = 0
     memory_avg_score: float = 0.0

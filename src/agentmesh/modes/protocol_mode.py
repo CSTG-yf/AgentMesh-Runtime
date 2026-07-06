@@ -760,6 +760,7 @@ def _run_protocol_mode_impl(
         memory_evidence_bytes=memory_evidence_bytes,
         evidence_candidate_count=packed_evidence.audit.candidate_count,
         evidence_accepted_count=packed_evidence.audit.accepted_count,
+        evidence_partial_count=packed_evidence.audit.partial_count,
         evidence_deduplicated_count=packed_evidence.audit.deduplicated_count,
         evidence_filtered_count=packed_evidence.audit.filtered_count,
         memory_avg_score=memory_quality["avg_score"],
@@ -831,6 +832,7 @@ def _pack_candidate_evidence(
         # Evidence is one optional context part and can never consume more than
         # the retriever's complete candidate context allowance.
         max_chars=protocol.retriever_max_chars,
+        max_bytes=protocol.evidence_max_bytes,
     )
 
 

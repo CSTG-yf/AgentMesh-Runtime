@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from math import isfinite
 from typing import Any
+
+_UNTRUSTED_LABEL = "UNTRUSTED_EVIDENCE_DATA_ONLY"
 
 
 @dataclass(frozen=True)
@@ -12,6 +15,7 @@ class EvidencePackAudit:
     deduplicated_count: int
     filtered_count: int
     injected_bytes: int
+    partial_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -27,7 +31,9 @@ def pack_evidence(
     min_score: float,
     max_items: int,
     max_chars: int,
+    max_bytes: int | None = None,
 ) -> PackedEvidence:
+    byte_cap = max_chars * 4 if max_bytes is None else max_bytes
     ranked = sorted(evidence, key=_score, reverse=True)
     seen: set[str] = set()
     eligible: list[dict[str, Any]] = []
@@ -46,19 +52,23 @@ def pack_evidence(
 
     accepted: list[dict[str, Any]] = []
     lines: list[str] = []
+    partial_count = 0
     for item in eligible:
         if len(accepted) >= max_items:
             break
-        separator_chars = 1 if lines else 0
-        remaining = max_chars - sum(len(line) for line in lines) - separator_chars
-        if remaining <= 0:
-            break
-        line = _evidence_line(item)[:remaining]
-        if not line:
-            break
+        line, partial = _fit_record(
+            item,
+            existing_lines=lines,
+            max_chars=max_chars,
+            max_bytes=byte_cap,
+        )
+        if line is None:
+            continue
         accepted.append(item)
         lines.append(line)
-    digest = "\n".join(lines)
+        partial_count += int(partial)
+
+    digest = _render_digest(lines)
     accepted_ids = tuple(
         memory_id
         for item in accepted
@@ -73,8 +83,94 @@ def pack_evidence(
             deduplicated_count=deduplicated_count,
             filtered_count=filtered_count,
             injected_bytes=len(digest.encode("utf-8")),
+            partial_count=partial_count,
         ),
     )
+
+
+def _fit_record(
+    item: dict[str, Any],
+    *,
+    existing_lines: list[str],
+    max_chars: int,
+    max_bytes: int,
+) -> tuple[str | None, bool]:
+    full = _structured_record(item)
+    full_line = _encode_record(full)
+    if _fits(existing_lines + [full_line], max_chars=max_chars, max_bytes=max_bytes):
+        return full_line, False
+
+    snippet = str(full.get("snippet", ""))
+    low = 0
+    high = len(snippet)
+    best: str | None = None
+    while low <= high:
+        midpoint = (low + high) // 2
+        candidate = {**full, "snippet": snippet[:midpoint]}
+        encoded = _encode_record(candidate)
+        if _fits(existing_lines + [encoded], max_chars=max_chars, max_bytes=max_bytes):
+            best = encoded
+            low = midpoint + 1
+        else:
+            high = midpoint - 1
+    if best is not None:
+        return best, True
+
+    minimum = _minimum_record(item)
+    minimum_line = _encode_record(minimum)
+    if _fits(
+        existing_lines + [minimum_line],
+        max_chars=max_chars,
+        max_bytes=max_bytes,
+    ):
+        return minimum_line, True
+    return None, False
+
+
+def _structured_record(item: dict[str, Any]) -> dict[str, Any]:
+    record = _minimum_record(item)
+    record.update(
+        {
+            "score": _score(item),
+            "title": str(item.get("title") or "evidence"),
+            "snippet": str(item.get("snippet") or ""),
+        }
+    )
+    return record
+
+
+def _minimum_record(item: dict[str, Any]) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "memory_id": str(item.get("memory_id") or "evidence"),
+    }
+    for key in ("source_agent", "provenance_trace_id"):
+        value = item.get(key)
+        if value is not None and str(value):
+            record[key] = str(value)
+    refs = item.get("evidence_refs")
+    if isinstance(refs, list):
+        record["evidence_refs"] = [str(value) for value in refs[:3]]
+    return record
+
+
+def _encode_record(record: dict[str, Any]) -> str:
+    return json.dumps(
+        record,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _render_digest(lines: list[str]) -> str:
+    if not lines:
+        return ""
+    return "\n".join([_UNTRUSTED_LABEL, *lines])
+
+
+def _fits(lines: list[str], *, max_chars: int, max_bytes: int) -> bool:
+    digest = _render_digest(lines)
+    return len(digest) <= max_chars and len(digest.encode("utf-8")) <= max_bytes
 
 
 def _score(item: dict[str, Any]) -> float:
@@ -93,30 +189,3 @@ def _deduplication_key(item: dict[str, Any]) -> str:
     title = " ".join(str(item.get("title") or "").lower().split())
     snippet = " ".join(str(item.get("snippet") or "").lower().split())
     return f"content:{title}|{snippet}"
-
-
-def _evidence_line(item: dict[str, Any]) -> str:
-    memory_id = str(item.get("memory_id") or "evidence").strip()
-    title = " ".join(str(item.get("title") or "evidence").split())
-    snippet = " ".join(str(item.get("snippet") or "").split())
-    attributes = [f"score={_score(item):.3f}"]
-    source_agent = _compact_value(item.get("source_agent"))
-    if source_agent:
-        attributes.append(f"source={source_agent}")
-    trace_id = _compact_value(item.get("provenance_trace_id"))
-    if trace_id:
-        attributes.append(f"trace={trace_id}")
-    evidence_refs = item.get("evidence_refs")
-    if isinstance(evidence_refs, list):
-        refs = [
-            compact
-            for value in evidence_refs[:3]
-            if (compact := _compact_value(value))
-        ]
-        if refs:
-            attributes.append(f"refs={','.join(refs)}")
-    return f"[{memory_id}] {title} ({'; '.join(attributes)}): {snippet}"
-
-
-def _compact_value(value: object, limit: int = 160) -> str:
-    return " ".join(str(value or "").split())[:limit]

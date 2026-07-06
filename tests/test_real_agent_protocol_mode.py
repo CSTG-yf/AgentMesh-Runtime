@@ -318,8 +318,10 @@ def test_candidate_direct_retrieval_preserves_provenance_downstream(
         for row in read_jsonl(paths.protocol_agent_io)
         if row["input"]["action"] == "summary.create"
     ]
-    assert "source=summarizer" in summarizer_rows[0]["input"]["params"]["task"]
-    assert "trace=trace-prior" in summarizer_rows[0]["input"]["params"]["task"]
+    assert '"source_agent":"summarizer"' in summarizer_rows[0]["input"]["params"]["task"]
+    assert '"provenance_trace_id":"trace-prior"' in (
+        summarizer_rows[0]["input"]["params"]["task"]
+    )
     assert source_evidence_ref in summarizer_rows[0]["input"]["params"]["task"]
 
     evidence_payloads = [
