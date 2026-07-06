@@ -138,7 +138,19 @@ def _run_protocol_mode_impl(
         load_configured_llm=load_configured_llm,
     )
     instrumented = (
-        InstrumentedLLMClient(context.llm_client)
+        InstrumentedLLMClient(
+            context.llm_client,
+            max_retries=(
+                experiment_profile.llm_max_retries
+                if experiment_profile is not None
+                else 0
+            ),
+            retry_backoff_seconds=(
+                experiment_profile.llm_retry_backoff_seconds
+                if experiment_profile is not None
+                else 0.05
+            ),
+        )
         if context.llm_client is not None
         else None
     )
@@ -725,6 +737,7 @@ def _run_protocol_mode_impl(
     metrics = RunMetrics(
         llm_call_count=instrumented.stats.call_count if instrumented else 0,
         llm_error_count=instrumented.stats.error_count if instrumented else 0,
+        llm_retry_count=instrumented.stats.retry_count if instrumented else 0,
         message_count=len(messages),
         text_chars=len(task),
         estimated_tokens=agent_io_tokens or estimate_tokens(task),

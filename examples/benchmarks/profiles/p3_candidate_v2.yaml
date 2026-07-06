@@ -4,6 +4,8 @@ repeat: 3
 prompt_version: p3-v2
 route_policy_version: quality_safe_v1
 optimization_enabled: true
+llm_max_retries: 1
+llm_retry_backoff_seconds: 0.05
 protocol:
   planner_max_chars: 700
   retriever_max_chars: 900

@@ -50,8 +50,21 @@ def test_load_p3_candidate_v2_enables_deterministic_retrieval() -> None:
     assert profile.artifact_label == "p3-candidate-v2"
     assert profile.prompt_version == "p3-v2"
     assert profile.route_policy_version == "quality_safe_v1"
+    assert profile.llm_max_retries == 1
     assert profile.protocol.deterministic_retrieval_evidence is True
     assert len(profile.sha256) == 64
+
+
+def test_retry_policy_defaults_off_and_is_part_of_profile_identity() -> None:
+    default = LLMExperimentProfile(profile_id="p", artifact_label="p")
+    retrying = LLMExperimentProfile(
+        profile_id="p",
+        artifact_label="p",
+        llm_max_retries=1,
+    )
+
+    assert default.llm_max_retries == 0
+    assert default.sha256 != retrying.sha256
 
 
 @pytest.mark.parametrize("artifact_label", ["a/b", "", " leading", "two words", "a\\b"])
@@ -102,6 +115,82 @@ def test_instrumented_llm_client_counts_success() -> None:
     assert client.stats.error_count == 0
 
 
+def test_instrumented_llm_client_retries_transient_failure_once() -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    class FlakyClient:
+        def complete(self, **_: object) -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise TimeoutError("provider timeout")
+            return "ok"
+
+    client = InstrumentedLLMClient(
+        FlakyClient(),
+        max_retries=1,
+        retry_backoff_seconds=0.01,
+        sleep=sleeps.append,
+    )
+    assert client.complete(agent_name="planner", messages=[]) == "ok"
+    assert attempts == 2
+    assert sleeps == [0.01]
+    assert client.stats.call_count == 1
+    assert client.stats.retry_count == 1
+    assert client.stats.error_count == 0
+
+
+def test_instrumented_llm_client_keeps_final_transient_failure() -> None:
+    attempts = 0
+
+    class DownClient:
+        def complete(self, **_: object) -> str:
+            nonlocal attempts
+            attempts += 1
+            raise ConnectionError("provider unavailable")
+
+    client = InstrumentedLLMClient(DownClient(), max_retries=1, sleep=lambda _: None)
+    with pytest.raises(ConnectionError, match="provider unavailable"):
+        client.complete(agent_name="planner", messages=[])
+    assert attempts == 2
+    assert client.stats.retry_count == 1
+    assert client.stats.error_count == 1
+
+
+def test_instrumented_llm_client_does_not_retry_non_transient_failure() -> None:
+    attempts = 0
+
+    class InvalidClient:
+        def complete(self, **_: object) -> str:
+            nonlocal attempts
+            attempts += 1
+            raise ValueError("invalid model")
+
+    client = InstrumentedLLMClient(InvalidClient(), max_retries=3, sleep=lambda _: None)
+    with pytest.raises(ValueError, match="invalid model"):
+        client.complete(agent_name="planner", messages=[])
+    assert attempts == 1
+    assert client.stats.retry_count == 0
+    assert client.stats.error_count == 1
+
+
+def test_instrumented_llm_client_defaults_to_no_retries() -> None:
+    attempts = 0
+
+    class TimeoutClient:
+        def complete(self, **_: object) -> str:
+            nonlocal attempts
+            attempts += 1
+            raise TimeoutError("provider timeout")
+
+    client = InstrumentedLLMClient(TimeoutClient())
+    with pytest.raises(TimeoutError):
+        client.complete(agent_name="planner", messages=[])
+    assert attempts == 1
+    assert client.stats.retry_count == 0
+
+
 @pytest.mark.parametrize("original", [None, "keep-me"])
 def test_benchmark_restores_global_memory_env_after_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, original: str | None
@@ -134,9 +223,13 @@ def test_profile_repeat_forwarding_summary_and_failure_abort(
     calls = 0
 
     def fake_text(
-        *, task_path: Path, paths: RuntimePaths, load_configured_llm: bool
+        *,
+        task_path: Path,
+        paths: RuntimePaths,
+        load_configured_llm: bool,
+        experiment_profile: LLMExperimentProfile | None = None,
     ) -> ModeRunResult:
-        del task_path, paths, load_configured_llm
+        del task_path, paths, load_configured_llm, experiment_profile
         return ModeRunResult(
             mode="text", trace_id="text", answer="ok", metrics=RunMetrics(llm_call_count=1)
         )

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
+from agentmesh.eval.llm_experiment import LLMExperimentProfile
 from agentmesh.eval.metrics import ModeRunResult, RunMetrics, estimate_tokens
 from agentmesh.llm.client import (
     ChatMessage,
@@ -24,6 +25,7 @@ def run_text_mode(
     llm_client: LLMClient | None = None,
     load_configured_llm: bool = True,
     trace_id: str | None = None,
+    experiment_profile: LLMExperimentProfile | None = None,
 ) -> ModeRunResult:
     paths.ensure()
     trace_id = trace_id or f"trace-{uuid4().hex[:12]}"
@@ -44,7 +46,19 @@ def run_text_mode(
             update={"llm_client": _create_text_mode_llm_client(runtime_context)}
         )
     instrumented = (
-        InstrumentedLLMClient(runtime_context.llm_client)
+        InstrumentedLLMClient(
+            runtime_context.llm_client,
+            max_retries=(
+                experiment_profile.llm_max_retries
+                if experiment_profile is not None
+                else 0
+            ),
+            retry_backoff_seconds=(
+                experiment_profile.llm_retry_backoff_seconds
+                if experiment_profile is not None
+                else 0.05
+            ),
+        )
         if runtime_context.llm_client is not None
         else None
     )
@@ -106,6 +120,7 @@ def run_text_mode(
     metrics = RunMetrics(
         llm_call_count=instrumented.stats.call_count if instrumented else 0,
         llm_error_count=instrumented.stats.error_count if instrumented else 0,
+        llm_retry_count=instrumented.stats.retry_count if instrumented else 0,
         message_count=len(agents),
         text_chars=sum(len(item) for item in [task, context]),
         estimated_tokens=estimate_tokens(task) + estimate_tokens(context),

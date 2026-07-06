@@ -1,3 +1,4 @@
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -28,11 +29,22 @@ class LLMClient(Protocol):
 class LLMCallStats(BaseModel):
     call_count: int = 0
     error_count: int = 0
+    retry_count: int = 0
 
 
 class InstrumentedLLMClient:
-    def __init__(self, client: LLMClient) -> None:
+    def __init__(
+        self,
+        client: LLMClient,
+        *,
+        max_retries: int = 0,
+        retry_backoff_seconds: float = 0.05,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._client = client
+        self._max_retries = max_retries
+        self._retry_backoff_seconds = retry_backoff_seconds
+        self._sleep = sleep
         self.stats = LLMCallStats()
 
     def complete(
@@ -43,15 +55,35 @@ class InstrumentedLLMClient:
         variables: dict[str, object] | None = None,
     ) -> str:
         self.stats.call_count += 1
-        try:
-            return self._client.complete(
-                agent_name=agent_name,
-                messages=messages,
-                variables=variables,
-            )
-        except Exception:
-            self.stats.error_count += 1
-            raise
+        for attempt in range(self._max_retries + 1):
+            try:
+                return self._client.complete(
+                    agent_name=agent_name,
+                    messages=messages,
+                    variables=variables,
+                )
+            except Exception as exc:
+                if attempt < self._max_retries and _is_transient_provider_error(exc):
+                    self.stats.retry_count += 1
+                    self._sleep(self._retry_backoff_seconds * (2**attempt))
+                    continue
+                self.stats.error_count += 1
+                raise
+        raise AssertionError("retry loop exhausted")
+
+
+def _is_transient_provider_error(exc: Exception) -> bool:
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, urllib.error.HTTPError):
+            return current.code == 429 or 500 <= current.code < 600
+        if isinstance(
+            current,
+            (TimeoutError, ConnectionError, urllib.error.URLError),
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 Transport = Callable[[str, dict[str, str], dict[str, object], float], dict[str, object]]

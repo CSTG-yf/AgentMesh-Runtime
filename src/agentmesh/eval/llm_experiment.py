@@ -31,6 +31,8 @@ class LLMExperimentProfile(BaseModel):
     prompt_version: str = "p2"
     route_policy_version: Literal["legacy", "quality_safe_v1"] = "legacy"
     optimization_enabled: bool = False
+    llm_max_retries: int = Field(default=0, ge=0, le=3)
+    llm_retry_backoff_seconds: float = Field(default=0.05, ge=0.0, le=5.0)
     protocol: ProtocolOptimizationProfile = Field(
         default_factory=ProtocolOptimizationProfile
     )

@@ -339,6 +339,7 @@ def _run_benchmark_impl(
                         task_path=input_file,
                         paths=paths,
                         load_configured_llm=use_llm,
+                        experiment_profile=profile,
                     )
                 elif profile is None:
                     result = run_protocol_mode(
