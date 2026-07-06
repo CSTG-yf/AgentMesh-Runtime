@@ -218,8 +218,42 @@ def test_disabled_profile_preserves_no_profile_protocol_params(tmp_path: Path) -
     ]
     assert baseline_params == no_profile_params
     assert all("_disable_state_fallback" not in params for params in baseline_params)
+    assert all(
+        "deterministic_retrieval_evidence" not in params
+        for params in baseline_params
+    )
     assert no_profile.metrics.context_audits == []
     assert baseline.metrics.context_audits == []
+
+
+def test_candidate_direct_retrieval_keeps_route_without_retriever_llm(
+    tmp_path: Path,
+) -> None:
+    task = tmp_path / "task.txt"
+    task.write_text("Remember my preferred editor.", encoding="utf-8")
+    client = AgentEchoLLMClient()
+
+    result = run_protocol_mode(
+        task_path=task,
+        paths=RuntimePaths(root=tmp_path / "candidate-v2"),
+        llm_client=client,
+        experiment_profile=LLMExperimentProfile(
+            profile_id="candidate-v2",
+            artifact_label="candidate-v2",
+            route_policy_version="quality_safe_v1",
+            optimization_enabled=True,
+            protocol=ProtocolOptimizationProfile(
+                deterministic_retrieval_evidence=True,
+            ),
+        ),
+    )
+
+    called_agents = [str(call["agent_name"]) for call in client.calls]
+    assert "retriever" in result.metrics.dynamic_route
+    assert result.metrics.memory_query_count == 1
+    assert "retriever" not in called_agents
+    assert "planner" in called_agents
+    assert "summarizer" in called_agents
 
 
 def test_candidate_budgets_planner_and_evidence_refinement_contexts(

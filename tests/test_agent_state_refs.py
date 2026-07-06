@@ -127,6 +127,119 @@ def test_retriever_reads_query_ref_and_returns_memory_hits(tmp_path: Path) -> No
     assert "retriever" in record.consumers
 
 
+def test_deterministic_retriever_returns_memory_evidence_without_llm(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    trace_id = "trace-deterministic-retriever"
+    state_store = StateStore(paths)
+    client = CapturingLLM("rewritten evidence")
+    context = RuntimeContext.from_paths(
+        paths=paths,
+        trace_id=trace_id,
+        llm_client=client,
+    )
+    encoder = create_embedding_encoder(context.config.embedding)
+    memory_store = HybridMemoryStore(paths=paths, state_store=state_store, encoder=encoder)
+    evidence_ref = state_store.put_evidence(
+        trace_id="trace-memory-source",
+        producer="summarizer",
+        evidence=[{"title": "validated output", "snippet": "sandbox passed"}],
+    )
+    unit = MemoryUnit(
+        source_agent="summarizer",
+        task_topic="code validation prior result",
+        summary="A prior code task produced validation output in a sandbox.",
+        tags=["code"],
+        evidence_refs=[evidence_ref],
+        state_refs=[],
+        embedding_vector=encoder.encode("code validation output sandbox"),
+        confidence=0.9,
+        validity_score=0.9,
+        provenance_trace_id="trace-memory-source",
+    )
+    memory_store.put(unit)
+    context = context.model_copy(update={"memory_store": memory_store})
+
+    result = RetrieverAgent().handle(
+        AMPMessage(
+            trace_id=trace_id,
+            source_agent="planner",
+            target_agent="retriever",
+            msg_type=MsgType.INVOKE,
+            action="memory.semantic_search",
+            params={
+                "query": "Need code validation output.",
+                "deterministic_retrieval_evidence": True,
+            },
+        ),
+        context,
+    )
+
+    assert client.calls == []
+    assert len(result.result["evidence"]) == 1
+    evidence = result.result["evidence"][0]
+    assert evidence["memory_id"]
+    assert evidence["source_agent"] == "summarizer"
+    assert evidence["provenance_trace_id"] == "trace-memory-source"
+    assert evidence["evidence_refs"] == [evidence_ref]
+    assert evidence["memory_score"] > 0
+    assert evidence["snippet"] == unit.summary
+
+
+def test_deterministic_retriever_returns_empty_evidence_without_hit(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths(root=tmp_path)
+    client = CapturingLLM("rewritten evidence")
+    context = RuntimeContext.from_paths(
+        paths=paths,
+        trace_id="trace-deterministic-empty",
+        llm_client=client,
+    )
+
+    result = RetrieverAgent().handle(
+        AMPMessage(
+            trace_id=context.trace_id,
+            source_agent="planner",
+            target_agent="retriever",
+            msg_type=MsgType.INVOKE,
+            action="memory.semantic_search",
+            params={
+                "query": "No matching memory exists.",
+                "deterministic_retrieval_evidence": True,
+            },
+        ),
+        context,
+    )
+
+    assert client.calls == []
+    assert result.result["evidence"] == []
+
+
+def test_default_retriever_still_calls_llm(tmp_path: Path) -> None:
+    client = CapturingLLM("rewritten evidence")
+    context = RuntimeContext.from_paths(
+        paths=RuntimePaths(root=tmp_path),
+        trace_id="trace-default-retriever",
+        llm_client=client,
+    )
+
+    RetrieverAgent().handle(
+        AMPMessage(
+            trace_id=context.trace_id,
+            source_agent="planner",
+            target_agent="retriever",
+            msg_type=MsgType.INVOKE,
+            action="memory.semantic_search",
+            params={"query": "Find prior evidence."},
+        ),
+        context,
+    )
+
+    assert len(client.calls) == 1
+
+
 def test_executor_reads_task_from_state_ref_for_codeact(tmp_path: Path) -> None:
     paths = RuntimePaths(root=tmp_path)
     trace_id = "trace-state-executor"

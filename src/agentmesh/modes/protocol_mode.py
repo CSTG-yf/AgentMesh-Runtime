@@ -313,7 +313,16 @@ def _run_protocol_mode_impl(
         retriever_result = scheduler.invoke(
             source_agent="planner",
             action="memory.semantic_search",
-            params={"query": retriever_query, "task_chars": len(task)},
+            params={
+                "query": retriever_query,
+                "task_chars": len(task),
+                **(
+                    {"deterministic_retrieval_evidence": True}
+                    if experiment_profile is not None
+                    and experiment_profile.protocol.deterministic_retrieval_evidence
+                    else {}
+                ),
+            },
             state_refs=[task_ref, plan_ref],
         )
         evidence = list(retriever_result.result["evidence"])
@@ -526,6 +535,12 @@ def _run_protocol_mode_impl(
                 params={
                     "query": retriever_refine_query,
                     "tool_feedback": {} if optimization_enabled else tool_feedback,
+                    **(
+                        {"deterministic_retrieval_evidence": True}
+                        if experiment_profile is not None
+                        and experiment_profile.protocol.deterministic_retrieval_evidence
+                        else {}
+                    ),
                 },
                 state_refs=(
                     [task_ref]

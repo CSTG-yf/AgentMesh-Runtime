@@ -31,8 +31,11 @@ class RetrieverAgent(BaseAgent):
             )
         # Derive query_tags from the query text itself (not from params)
         query_tags = _derive_tags(query)
+        deterministic_evidence = (
+            message.params.get("deterministic_retrieval_evidence") is True
+        )
         llm_evidence: str | None = None
-        if context.llm_client is not None:
+        if context.llm_client is not None and not deterministic_evidence:
             try:
                 llm_evidence = context.llm_client.complete(
                     agent_name=self.name,
@@ -47,15 +50,17 @@ class RetrieverAgent(BaseAgent):
                 )
             except Exception:
                 llm_evidence = None
-        title = "deterministic-local-evidence"
-        if message.action == "evidence.refine":
-            title = "refined-local-evidence"
-        evidence: list[dict[str, object]] = [
-            {
-                "title": title,
-                "snippet": f"Evidence for {query[:80]}",
-            }
-        ]
+        evidence: list[dict[str, object]] = []
+        if not deterministic_evidence:
+            title = "deterministic-local-evidence"
+            if message.action == "evidence.refine":
+                title = "refined-local-evidence"
+            evidence.append(
+                {
+                    "title": title,
+                    "snippet": f"Evidence for {query[:80]}",
+                }
+            )
         memory_results = _memory_results(context=context, query=query, query_tags=query_tags)
         memory_hits = [_memory_hit_log_item(result) for result in memory_results]
         _append_memory_hit_log(
@@ -71,6 +76,9 @@ class RetrieverAgent(BaseAgent):
                 "snippet": _compact_snippet(result.memory.summary, 300),
                 "memory_id": result.memory.memory_id,
                 "memory_score": round(float(result.score), 4),
+                "source_agent": result.memory.source_agent,
+                "provenance_trace_id": result.memory.provenance_trace_id,
+                "evidence_refs": result.memory.evidence_refs,
             }
             for result in memory_results
         )
