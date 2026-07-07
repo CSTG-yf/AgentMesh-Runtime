@@ -27,3 +27,5 @@ data/
 .env.*
 !.env.example
 .claude/
+.pytest-main
+.pytest-review
