@@ -209,7 +209,7 @@ def test_benchmark_restores_global_memory_env_after_failure(
     assert os.environ.get("AGENTMESH_DISABLE_GLOBAL_MEMORY") == original
 
 
-def test_profile_repeat_forwarding_summary_and_failure_abort(
+def test_profile_repeat_forwarding_records_recovered_llm_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     suite = _write_suite(tmp_path)
@@ -252,23 +252,25 @@ def test_profile_repeat_forwarding_summary_and_failure_abort(
 
     monkeypatch.setattr("agentmesh.eval.benchmark.run_text_mode", fake_text)
     monkeypatch.setattr("agentmesh.eval.benchmark.run_protocol_mode", fake_protocol)
-    with pytest.raises(BenchmarkConfigError, match="provider failure"):
-        run_benchmark(suite, RuntimePaths(root=tmp_path), profile=profile)
+    summary = run_benchmark(suite, RuntimePaths(root=tmp_path), profile=profile)
     detail = RuntimePaths(root=tmp_path).benchmark_suite_detail(
         "profile_suite", "llm", "variant"
     )
-    assert len(read_jsonl(detail)) == 2
+    rows = read_jsonl(detail)
+    assert len(rows) == 4
+    assert any(row["metrics"]["llm_error_count"] == 1 for row in rows)
     assert protocol_profiles == [profile, profile]
     manifest = orjson.loads(
         RuntimePaths(root=tmp_path)
         .benchmark_suite_manifest("profile_suite", "llm", "variant")
         .read_bytes()
     )
+    assert summary.total_runs == 2
     assert manifest["repeat_count"] == 2
-    assert manifest["status"] == "failed"
-    assert manifest["completed_pairs"] == 1
+    assert manifest["status"] == "complete"
+    assert manifest["completed_pairs"] == 2
     assert manifest["expected_pairs"] == 2
-    assert manifest["failure_reason"] == "llm_provider_error"
+    assert manifest["failure_reason"] == ""
 
 
 def test_profile_success_summary_has_variant_and_quality_hash(

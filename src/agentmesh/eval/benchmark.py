@@ -372,13 +372,6 @@ def _run_benchmark_impl(
                 )
             text_result = results["text"]
             protocol_result = results["protocol"]
-            if profile is not None and (
-                text_result.metrics.llm_error_count
-                or protocol_result.metrics.llm_error_count
-            ):
-                raise BenchmarkConfigError(
-                    f"LLM provider failure for task {task.get('id', '')}"
-                )
             quality_results = {
                 "text": evaluate_quality(text_result.answer, quality_spec),
                 "protocol": evaluate_quality(protocol_result.answer, quality_spec),
