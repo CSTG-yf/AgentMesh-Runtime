@@ -224,7 +224,6 @@ class SQLiteMemoryStore:
                 MemorySearchResult(
                     memory=unit,
                     score=hybrid_score,
-                    semantic_similarity=semantic,
                     reason=(
                         f"hybrid: sem={semantic:.3f}, fts_boost={fts_boost:.3f}, "
                         f"validity={unit.validity_score:.2f}, reuse={unit.reuse_count}"

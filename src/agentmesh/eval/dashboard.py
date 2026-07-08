@@ -218,8 +218,8 @@ def _safe_json(value: object) -> str:
     return (
         json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         .replace("</", "<\\/")
-        .replace("\u2028", "\\u2028")
-        .replace("\u2029", "\\u2029")
+        .replace(" ", "\\u2028")
+        .replace(" ", "\\u2029")
     )
 
 
@@ -228,11 +228,11 @@ def _render_html(data: dict[str, object]) -> str:
 
 
 _HTML = r"""<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AgentMesh Benchmark</title>
+<title>AgentMesh 基准测试（Benchmark）</title>
 <style>
 :root{color-scheme:dark;--bg:#061523;--bg2:#081a2a;--panel:#0a1e2f;--panel2:#0c2337;--line:#29445a;--line2:#1c3549;--text:#f1f5f9;--muted:#9db0c0;--blue:#2f81f7;--blue2:#60a5fa;--slate:#98a8b6;--green:#49c887;--amber:#f4b860;--red:#f87171;--radius:8px}
 *{box-sizing:border-box}
@@ -286,15 +286,15 @@ details summary{cursor:pointer;list-style:none;padding:11px 14px;font-weight:650
 <body>
 <main class="shell">
   <header class="topbar">
-    <h1>AgentMesh Benchmark</h1>
+    <h1>AgentMesh 基准测试（Benchmark）</h1>
     <div class="meta">
       <span id="generated"></span>
-      <span><i class="dot"></i>Offline report</span>
+      <span><i class="dot"></i>离线报告（Offline report）</span>
       <span id="completeness"></span>
     </div>
   </header>
   <div id="app"></div>
-  <div class="footer">Self-contained report · no external runtime dependencies</div>
+  <div class="footer">独立报告 · 无需外部运行时依赖</div>
 </main>
 <script>
 const DATA=__DASHBOARD_DATA__;
@@ -304,53 +304,86 @@ const finite=v=>typeof v==="number"&&Number.isFinite(v);
 const number=v=>finite(v)?new Intl.NumberFormat("en-US",{maximumFractionDigits:2}).format(v):"N/A";
 const pct=v=>finite(v)?`${(v*100).toFixed(1)}%`:"N/A";
 const human=v=>{if(!finite(v))return"N/A";for(const [n,d] of [["GB",1e9],["MB",1e6],["KB",1e3]])if(Math.abs(v)>=d)return`${(v/d).toFixed(2)} ${n}`;return number(v)};
-const label=k=>k.replaceAll("_"," ").replace(/\b\w/g,c=>c.toUpperCase());
-const statusLabel=s=>({complete:"Completed",partial:"Partial data",not_generated:"Not generated"}[s]||s);
+function zhLabel(k){
+ const map={
+  total_runs:"总运行次数",token_estimator:"Token 估算器",token_saving_rate:"Token 节省率",
+  agent_io_bytes_reduction_rate:"Agent I/O 字节减少率",
+  text_agent_io_tokens:"文本模式 Agent I/O Token",protocol_agent_io_tokens:"协议模式 Agent I/O Token",
+  text_per_msg_avg_tokens:"文本模式平均每消息 Token",protocol_per_msg_avg_tokens:"协议模式平均每消息 Token",
+  latency_reduction_rate:"延迟降低率",quality_preservation_rate:"质量保持率",
+  wire_bytes_reduction_rate:"Wire 字节减少率",fair_wire_reduction_rate:"公平 Wire 减少率",
+  text_agent_io_bytes:"文本模式 Agent I/O 字节",protocol_agent_io_bytes:"协议模式 Agent I/O 字节",
+  protocol_total_bytes:"协议总字节",text_wire_bytes:"文本模式 Wire 字节",
+  protocol_wire_bytes:"协议模式 Wire 字节",
+  protocol_session_dictionary_bytes:"协议会话字典（Session Dictionary）字节",
+  protocol_typed_envelope_bytes:"协议类型化信封（Typed Envelope）字节",
+  protocol_typed_payload_bytes:"协议类型化负载（Typed Payload）字节",
+  protocol_compact_message_bytes:"协议压缩消息（Compact Message）字节",
+  protocol_json_wire_bytes:"协议 JSON Wire 字节",
+  protocol_state_payload_bytes:"协议状态负载（State Payload）字节",
+  memory_hit_rate:"记忆命中率",memory_reused_unit_count:"记忆重用单元数",
+  memory_evidence_count:"记忆证据数",memory_evidence_bytes:"记忆证据字节",
+  memory_avg_evidence_bytes_per_query:"每次查询平均证据字节",
+  memory_avg_reused_units_per_query:"每次查询平均重用单元数",
+  memory_avg_score:"平均记忆评分",memory_avg_semantic_similarity:"平均语义相似度（Semantic Similarity）",
+  memory_avg_tag_overlap_score:"平均标签重叠评分",
+  rust_core_enabled_runs:"Rust Core 启用运行数",rust_sandbox_backend_runs:"Rust Sandbox 后端运行数",
+  transport_send_count:"传输发送次数",transport_bytes:"传输字节数",
+  transport_avg_latency_ms:"平均传输延迟",transport_p99_latency_ms:"传输延迟 P99",
+  state_shm_transfer_count:"状态 SHM 传输次数",state_shm_transfer_bytes:"状态 SHM 传输字节",
+  feedback_round_count:"反馈轮次",planner_refine_count:"Planner 优化次数",
+  retriever_refine_count:"Retriever 优化次数",tool_feedback_count:"工具反馈次数",
+  malformed_csv:"格式异常的 CSV",empty_file:"空文件",unreadable_file:"无法读取的文件",
+  malformed_jsonl:"格式异常的 JSONL",missing_file:"缺失文件"
+ };
+ return map[k]||k.replaceAll("_"," ").replace(/\b\w/g,c=>c.toUpperCase());
+}
+const statusLabel=s=>({complete:"已完成",partial:"部分数据",not_generated:"未生成"}[s]||s);
 const metric=(obj,key)=>finite(obj?.[key])?obj[key]:null;
 const groups={
- "Efficiency":["total_runs","token_estimator","token_saving_rate","agent_io_bytes_reduction_rate","text_agent_io_tokens","protocol_agent_io_tokens","text_per_msg_avg_tokens","protocol_per_msg_avg_tokens","latency_reduction_rate","quality_preservation_rate"],
- "Communication":["wire_bytes_reduction_rate","fair_wire_reduction_rate","text_agent_io_bytes","protocol_agent_io_bytes","protocol_total_bytes","text_wire_bytes","protocol_wire_bytes","protocol_session_dictionary_bytes","protocol_typed_envelope_bytes","protocol_typed_payload_bytes","protocol_compact_message_bytes","protocol_json_wire_bytes","protocol_state_payload_bytes"],
- "Memory":["memory_hit_rate","memory_reused_unit_count","memory_evidence_count","memory_evidence_bytes","memory_avg_evidence_bytes_per_query","memory_avg_reused_units_per_query","memory_avg_score","memory_avg_semantic_similarity","memory_avg_tag_overlap_score"],
- "Transport & Runtime":["rust_core_enabled_runs","rust_sandbox_backend_runs","transport_send_count","transport_bytes","transport_avg_latency_ms","transport_p99_latency_ms","state_shm_transfer_count","state_shm_transfer_bytes"],
- "Feedback & Routing":["feedback_round_count","planner_refine_count","retriever_refine_count","tool_feedback_count"]
+ "效率（Efficiency）":["total_runs","token_estimator","token_saving_rate","agent_io_bytes_reduction_rate","text_agent_io_tokens","protocol_agent_io_tokens","text_per_msg_avg_tokens","protocol_per_msg_avg_tokens","latency_reduction_rate","quality_preservation_rate"],
+ "通信（Communication）":["wire_bytes_reduction_rate","fair_wire_reduction_rate","text_agent_io_bytes","protocol_agent_io_bytes","protocol_total_bytes","text_wire_bytes","protocol_wire_bytes","protocol_session_dictionary_bytes","protocol_typed_envelope_bytes","protocol_typed_payload_bytes","protocol_compact_message_bytes","protocol_json_wire_bytes","protocol_state_payload_bytes"],
+ "记忆（Memory）":["memory_hit_rate","memory_reused_unit_count","memory_evidence_count","memory_evidence_bytes","memory_avg_evidence_bytes_per_query","memory_avg_reused_units_per_query","memory_avg_score","memory_avg_semantic_similarity","memory_avg_tag_overlap_score"],
+ "传输与运行时（Transport & Runtime）":["rust_core_enabled_runs","rust_sandbox_backend_runs","transport_send_count","transport_bytes","transport_avg_latency_ms","transport_p99_latency_ms","state_shm_transfer_count","state_shm_transfer_bytes"],
+ "反馈与路由（Feedback & Routing）":["feedback_round_count","planner_refine_count","retriever_refine_count","tool_feedback_count"]
 };
 let suiteIndex=0,sortKey="task_id",sortAsc=true;
-$("#generated").textContent=`Generated: ${new Date(DATA.generated_at).toLocaleString()}`;
-$("#completeness").textContent=`Data completeness: ${DATA.expected_sources?Math.round(DATA.completeness*100):0}% (${DATA.available_sources}/${DATA.expected_sources} sources)`;
+$("#generated").textContent=`生成时间: ${new Date(DATA.generated_at).toLocaleString()}`;
+$("#completeness").textContent=`数据完整性: ${DATA.expected_sources?Math.round(DATA.completeness*100):0}% (${DATA.available_sources}/${DATA.expected_sources} 数据源)`;
 
 function render(){
  if(!DATA.suites.length){$("#app").innerHTML=emptyPage();return}
  suiteIndex=Math.min(suiteIndex,DATA.suites.length-1);
  const suite=DATA.suites[suiteIndex],s=suite.summary||{};
  $("#app").innerHTML=`<div class="workspace">
-  <aside class="rail"><div class="rail-title">Suites</div><div class="suite-list">${DATA.suites.map((x,i)=>suiteButton(x,i)).join("")}</div>
-  <div class="legend"><span><i class="dot green"></i>Completed</span><span><i class="dot blue"></i>Selected</span><span><i class="dot amber"></i>Partial data</span><span><i class="dot"></i>Not generated</span></div></aside>
+  <aside class="rail"><div class="rail-title">测试套件（Suites）</div><div class="suite-list">${DATA.suites.map((x,i)=>suiteButton(x,i)).join("")}</div>
+  <div class="legend"><span><i class="dot green"></i>已完成</span><span><i class="dot blue"></i>当前选中</span><span><i class="dot amber"></i>部分数据</span><span><i class="dot"></i>未生成</span></div></aside>
   <div class="content">
-   <section class="kpis">${kpi("Token saving",metric(s,"token_saving_rate"),"lower",true)}${kpi("Wire reduction",metric(s,"fair_wire_reduction_rate")??metric(s,"wire_bytes_reduction_rate"),"lower",true)}${kpi("Latency reduction",metric(s,"latency_reduction_rate"),"lower",true)}${kpi("Quality preservation",metric(s,"quality_preservation_rate"),"higher",true)}${kpi("Memory hit rate",metric(s,"memory_hit_rate"),"higher",true)}</section>
-   <section class="section"><div class="section-head"><div><div class="section-title">Mode comparison summary</div><small>Aggregated over selected suite: ${esc(suite.name)}</small></div><div class="mode-key"><span><i class="key-box"></i>Text Mode</span><span><i class="key-box protocol"></i>Protocol Mode</span></div></div><div class="charts">${charts(suite)}</div></section>
-   <section class="section"><div class="section-head"><div><div class="section-title">Task results</div><small id="task-count"></small></div><div class="toolbar"><input id="search" class="field search" placeholder="Search tasks…" aria-label="Search tasks"><select id="mode-filter" class="field"><option value="">All modes</option><option value="text">Text</option><option value="protocol">Protocol</option></select><button class="clear" id="clear">Clear filters</button></div></div><div class="table-wrap" id="table"></div></section>
-   <section class="section"><div class="section-head"><div class="section-title">All metrics</div><small>${Object.keys(s).length} recorded fields</small></div><div class="metrics">${metrics(s)}</div></section>
-   <section class="section"><details><summary>Evidence &amp; diagnostics</summary><div class="evidence"><pre>${esc(suite.report||"No report artifact available.")}</pre><div class="diagnostics">${diagnostics(suite)}</div></div></details></section>
+   <section class="kpis">${kpi("Token 节省",metric(s,"token_saving_rate"),"lower",true)}${kpi("Wire 减少",metric(s,"fair_wire_reduction_rate")??metric(s,"wire_bytes_reduction_rate"),"lower",true)}${kpi("延迟降低",metric(s,"latency_reduction_rate"),"lower",true)}${kpi("质量保持",metric(s,"quality_preservation_rate"),"higher",true)}${kpi("记忆命中率",metric(s,"memory_hit_rate"),"higher",true)}</section>
+   <section class="section"><div class="section-head"><div><div class="section-title">模式对比汇总（Mode Comparison）</div><small>当前套件: ${esc(suite.name)}</small></div><div class="mode-key"><span><i class="key-box"></i>文本模式（Text）</span><span><i class="key-box protocol"></i>协议模式（Protocol）</span></div></div><div class="charts">${charts(suite)}</div></section>
+   <section class="section"><div class="section-head"><div><div class="section-title">任务结果</div><small id="task-count"></small></div><div class="toolbar"><input id="search" class="field search" placeholder="搜索任务…" aria-label="搜索任务"><select id="mode-filter" class="field"><option value="">所有模式</option><option value="text">文本模式（Text）</option><option value="protocol">协议模式（Protocol）</option></select><button class="clear" id="clear">清除筛选</button></div></div><div class="table-wrap" id="table"></div></section>
+   <section class="section"><div class="section-head"><div class="section-title">全部指标</div><small>${Object.keys(s).length} 个已记录字段</small></div><div class="metrics">${metrics(s)}</div></section>
+   <section class="section"><details><summary>证据与诊断（Evidence &amp; Diagnostics）</summary><div class="evidence"><pre>${esc(suite.report||"暂无报告生成物。")}</pre><div class="diagnostics">${diagnostics(suite)}</div></div></details></section>
   </div></div>`;
  bind();
  renderTable();
 }
-function emptyPage(){return`<section class="section nosuites"><h2>No suites discovered</h2><p>No benchmark data is available yet. Run a benchmark and regenerate this report.</p><div class="kpi-value na">N/A</div><div class="kpi-note">Not recorded</div></section>`}
-function suiteButton(x,i){return`<button class="suite ${i===suiteIndex?"active":""}" data-suite="${i}"><span class="suite-name">${esc(x.name)}</span><span class="suite-status ${x.status}"><i class="dot"></i>${statusLabel(x.status)}</span><span class="suite-meta">${x.details.length||x.configured_task_count||0} result rows · ${x.source_count}/3 sources</span></button>`}
-function kpi(name,value,direction,isPct){return`<div class="kpi"><div class="kpi-label">${name}</div><div class="kpi-value ${value===null?"na":""}">${value===null?"N/A":isPct?pct(value):number(value)}</div><div class="kpi-note">${value===null?"Not recorded":direction==="higher"?"Higher is better":"Lower is better"}</div></div>`}
+function emptyPage(){return`<section class="section nosuites"><h2>未发现测试套件</h2><p>尚无基准测试数据。请先运行基准测试（Benchmark），然后重新生成此报告。</p><div class="kpi-value na">N/A</div><div class="kpi-note">未记录</div></section>`}
+function suiteButton(x,i){return`<button class="suite ${i===suiteIndex?"active":""}" data-suite="${i}"><span class="suite-name">${esc(x.name)}</span><span class="suite-status ${x.status}"><i class="dot"></i>${statusLabel(x.status)}</span><span class="suite-meta">${x.details.length||x.configured_task_count||0} 条结果 · ${x.source_count}/3 数据源</span></button>`}
+function kpi(name,value,direction,isPct){return`<div class="kpi"><div class="kpi-label">${name}</div><div class="kpi-value ${value===null?"na":""}">${value===null?"N/A":isPct?pct(value):number(value)}</div><div class="kpi-note">${value===null?"未记录":direction==="higher"?"越高越好":"越低越好"}</div></div>`}
 function charts(suite){const s=suite.summary||{},defs=[
- ["Tokens",s.text_agent_io_tokens,s.protocol_agent_io_tokens,number],
- ["Agent I/O bytes",s.text_agent_io_bytes,s.protocol_agent_io_bytes,human],
- ["Wire bytes",s.text_wire_bytes,s.protocol_wire_bytes,human],
- ["Latency",sumMode(suite.details,"text","latency_ms"),sumMode(suite.details,"protocol","latency_ms"),v=>finite(v)?`${number(v)} ms`:"N/A"]
+ ["Token 数",s.text_agent_io_tokens,s.protocol_agent_io_tokens,number],
+ ["Agent I/O 字节",s.text_agent_io_bytes,s.protocol_agent_io_bytes,human],
+ ["Wire 字节",s.text_wire_bytes,s.protocol_wire_bytes,human],
+ ["延迟（Latency）",sumMode(suite.details,"text","latency_ms"),sumMode(suite.details,"protocol","latency_ms"),v=>finite(v)?`${number(v)} ms`:"N/A"]
  ];return defs.map(([name,a,b,fmt])=>chart(name,a,b,fmt)).join("")}
 function sumMode(rows,mode,key){const values=rows.filter(r=>r.mode===mode).map(r=>r.metrics?.[key]).filter(finite);return values.length?values.reduce((a,b)=>a+b,0):null}
-function chart(name,a,b,fmt){if(!finite(a)&&!finite(b))return`<div class="chart"><h3>${name}</h3><div class="chart-empty">No benchmark data</div></div>`;const max=Math.max(a||0,b||0,1);return`<div class="chart"><h3>${name}</h3>${bar("Text Mode",a,max,"",fmt)}${bar("Protocol",b,max,"protocol",fmt)}</div>`}
+function chart(name,a,b,fmt){if(!finite(a)&&!finite(b))return`<div class="chart"><h3>${name}</h3><div class="chart-empty">暂无基准测试数据</div></div>`;const max=Math.max(a||0,b||0,1);return`<div class="chart"><h3>${name}</h3>${bar("文本模式（Text）",a,max,"",fmt)}${bar("协议模式（Protocol）",b,max,"protocol",fmt)}</div>`}
 function bar(name,v,max,cls,fmt){return`<div class="bar-row"><span>${name}</span><div><div class="track"><div class="bar ${cls}" style="width:${finite(v)?Math.max(2,v/max*100):0}%"></div></div><div class="bar-value">${fmt(v)}</div></div></div>`}
-function metrics(s){const seen=new Set(),content=Object.entries(groups).map(([name,keys])=>{const present=keys.filter(k=>k in s);present.forEach(k=>seen.add(k));return metricGroup(name,present,s)});const extra=Object.keys(s).filter(k=>!seen.has(k));if(extra.length)content.push(metricGroup("Additional",extra,s));return content.join("")||`<div class="empty"><strong>No summary metrics</strong>Metrics will appear after this suite runs.</div>`}
-function metricGroup(name,keys,s){return`<div class="metric-group"><h3>${esc(name)} (${keys.length})</h3>${keys.length?keys.map(k=>`<div class="metric-row"><span>${esc(label(k))}</span><code class="${s[k]===null?"na":""}">${formatMetric(k,s[k])}</code></div>`).join(""):`<div class="metric-row"><span>Metrics</span><code class="na">N/A</code></div>`}</div>`}
+function metrics(s){const seen=new Set(),content=Object.entries(groups).map(([name,keys])=>{const present=keys.filter(k=>k in s);present.forEach(k=>seen.add(k));return metricGroup(name,present,s)});const extra=Object.keys(s).filter(k=>!seen.has(k));if(extra.length)content.push(metricGroup("其他（Additional）",extra,s));return content.join("")||`<div class="empty"><strong>暂无汇总指标</strong>运行测试套件后将显示指标。</div>`}
+function metricGroup(name,keys,s){return`<div class="metric-group"><h3>${esc(name)} (${keys.length})</h3>${keys.length?keys.map(k=>`<div class="metric-row"><span>${esc(zhLabel(k))}</span><code class="${s[k]===null?"na":""}">${formatMetric(k,s[k])}</code></div>`).join(""):`<div class="metric-row"><span>指标</span><code class="na">N/A</code></div>`}</div>`}
 function formatMetric(k,v){if(v===null||v===undefined||v==="")return"N/A";if(typeof v!=="number")return esc(v);if(k.includes("rate"))return pct(v);if(k.includes("bytes"))return human(v);if(k.includes("latency"))return`${number(v)} ms`;return number(v)}
-function diagnostics(s){if(!s.diagnostics.length)return`<div class="diagnostic" style="border-color:var(--green)"><strong>Sources verified</strong>No parsing diagnostics.</div>`;return s.diagnostics.map(d=>`<div class="diagnostic"><strong>${esc(label(d.kind))}</strong>${esc(d.source)} · ${esc(d.message)}</div>`).join("")}
+function diagnostics(s){if(!s.diagnostics.length)return`<div class="diagnostic" style="border-color:var(--green)"><strong>数据源已验证</strong>无解析诊断信息。</div>`;return s.diagnostics.map(d=>`<div class="diagnostic"><strong>${esc(zhLabel(d.kind))}</strong>${esc(d.source)} · ${esc(d.message)}</div>`).join("")}
 function bind(){
  document.querySelectorAll("[data-suite]").forEach(b=>b.onclick=()=>{suiteIndex=Number(b.dataset.suite);render()});
  $("#search").oninput=renderTable;$("#mode-filter").onchange=renderTable;
@@ -360,9 +393,9 @@ function renderTable(){
  const suite=DATA.suites[suiteIndex],query=$("#search").value.toLowerCase(),mode=$("#mode-filter").value;
  let rows=suite.details.filter(r=>(!mode||r.mode===mode)&&JSON.stringify(r).toLowerCase().includes(query));
  rows.sort((a,b)=>compare(valueFor(a,sortKey),valueFor(b,sortKey))*(sortAsc?1:-1));
- $("#task-count").textContent=`${rows.length} of ${suite.details.length} result rows`;
- if(!rows.length){$("#table").innerHTML=`<div class="empty"><strong>No benchmark data</strong>${suite.status==="not_generated"?"This suite has not been generated.":"No rows match the current filters."}</div>`;return}
- const cols=[["task_id","Task ID"],["group","Group"],["mode","Mode"],["agent_io_tokens","Tokens"],["agent_io_bytes","Agent I/O bytes"],["wire_bytes","Wire bytes"],["latency_ms","Latency"],["answer_quality_score","Quality"],["memory_query_hit_count","Memory hits"],["trace_id","Trace ID"]];
+ $("#task-count").textContent=`${rows.length} / ${suite.details.length} 条结果`;
+ if(!rows.length){$("#table").innerHTML=`<div class="empty"><strong>暂无基准测试数据</strong>${suite.status==="not_generated"?"此套件尚未生成。":"没有匹配当前筛选条件的结果。"}</div>`;return}
+ const cols=[["task_id","任务 ID"],["group","分组"],["mode","模式"],["agent_io_tokens","Token 数"],["agent_io_bytes","Agent I/O 字节"],["wire_bytes","Wire 字节"],["latency_ms","延迟（Latency）"],["answer_quality_score","回答质量"],["memory_query_hit_count","记忆命中数"],["trace_id","Trace ID"]];
  $("#table").innerHTML=`<table class="results"><thead><tr>${cols.map(([k,n])=>`<th data-sort="${k}">${n}${sortKey===k?(sortAsc?" ↑":" ↓"):""}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(([k])=>cell(r,k)).join("")}</tr>`).join("")}</tbody></table>`;
  document.querySelectorAll("[data-sort]").forEach(h=>h.onclick=()=>{const k=h.dataset.sort;if(sortKey===k)sortAsc=!sortAsc;else{sortKey=k;sortAsc=true}renderTable()});
 }

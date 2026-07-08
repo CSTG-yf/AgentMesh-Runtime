@@ -2,7 +2,53 @@
 
 AgentMesh-Runtime 是一个面向多 Agent 协作的轻量级运行时原型。它的核心目标不是再做一个普通聊天机器人，而是验证一套可落地的协作机制：用结构化协议、状态引用、共享记忆、可选 Rust 热路径和可控工具执行，降低多 Agent 在连续任务中的重复上下文传递成本。
 
-项目根目录是 `E:/system-compute`。第一版保持离线可运行，默认不依赖外部模型、GPU、向量数据库、消息队列、LangChain、numpy 或 torch；配置大模型和 TEI embedding 后，可以切换到真实 Agent 互动。
+项目根目录是 `E:/system-mvp/AgentMesh-Runtime`。第一版保持离线可运行，默认不依赖外部模型、GPU、向量数据库、消息队列、LangChain、numpy 或 torch；配置大模型和 TEI embedding 后，可以切换到真实 Agent 互动。
+
+## 最快部署和 Shell 使用
+
+如果只是本机快速启动，推荐直接使用 `uv`：
+
+```bash
+uv sync --all-extras
+docker compose -f docker-compose.embedding.yml up -d
+uv run agentmesh init
+uv run agentmesh shell
+```
+
+`uv sync --all-extras` 安装好 Python 依赖后，建议先用 Docker 部署 TEI 嵌入模型服务；这样 Protocol Mode 的共享记忆和语义检索会使用真实 embedding。没有启动 TEI 时系统仍可运行，会自动回退到本地 `HashEmbeddingEncoder`。
+
+进入 shell 后可以直接输入问题，默认等同于 `/ask <message>`，会走 Protocol Mode 交互链路。常用命令：
+
+```text
+/help                                      # 查看全部命令
+/ask 解释 AgentMesh 的 StateRef 机制        # 单次交互问答
+/compare --no-llm 生成一个多步骤评测方案     # 离线对比 Text/Protocol 两种模式
+/run protocol examples/tasks/A1_requirements.txt
+/benchmark --no-llm standard
+/memory --keyword AgentMesh
+/trace 20
+/report
+/dashboard
+/exit                                      # 退出 shell
+```
+
+如果要按 openEuler/Docker 路径最快部署：
+
+```bash
+cp .env.example .env
+bash scripts/deploy_openeuler_docker.sh
+docker compose run --rm agentmesh shell
+```
+
+常用 Docker 命令：
+
+```bash
+docker compose run --rm agentmesh compare "分析 AgentMesh Runtime 如何减少重复上下文传递"
+docker compose run --rm agentmesh benchmark --suite standard --no-llm
+docker compose run --rm agentmesh dashboard
+```
+
+需要接入真实模型时，编辑 `.env` 中的 `AGENTMESH_LLM_BASE_URL`、`AGENTMESH_LLM_API_KEY` 和 `AGENTMESH_LLM_MODEL`；需要离线可复现实验时，在 `compare` 或 `benchmark` 命令后加 `--no-llm`。
 
 ## 当前实现概览
 
