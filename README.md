@@ -50,6 +50,70 @@ docker compose run --rm agentmesh dashboard
 
 需要接入真实模型时，编辑 `.env` 中的 `AGENTMESH_LLM_BASE_URL`、`AGENTMESH_LLM_API_KEY` 和 `AGENTMESH_LLM_MODEL`；需要离线可复现实验时，在 `compare` 或 `benchmark` 命令后加 `--no-llm`。
 
+## 面向赛题的直接回答
+
+本项目对应第三届中国研究生操作系统开源创新大赛社区赛题“应用创新-一种面向多智能体协作的低开销通信、状态传递与共享记忆机制”。README 后续内容围绕赛题要求展开：先说明系统如何满足每一项要求，再给出可复现实验和 benchmark 结果。
+
+| 赛题要求 | AgentMesh-Runtime 的实现 |
+| --- | --- |
+| 不少于 3 个 Agent 协同运行 | 内置 4 个 Agent：`PlannerAgent`、`RetrieverAgent`、`ExecutorAgent`、`SummarizerAgent`，覆盖规划、检索、工具执行和总结。 |
+| 结构化通信协议替代长文本透传 | 实现 AMP 消息协议，包含 `msg_type`、`action`、`params`、`result`、`capability`、`state_refs` 等字段，并支持 HELLO、能力声明、能力查询和协议映射。 |
+| 同时支持纯文本模式和结构化协议模式 | `agentmesh run --mode text` 是纯文本 baseline；`agentmesh run --mode protocol` 是结构化协议方案；`agentmesh compare` 和 `benchmark` 在相同任务条件下运行两套模式。 |
+| 非文本中间状态传递 | StateStore 将 `TextState`、`EmbeddingState`、`EvidenceState`、`CodeResultState`、`SummaryState` 等 payload 写入文件/SQLite/可选共享内存，Agent 间传递 `state://...` 引用，不重复透传完整文本。 |
+| embedding 或语义向量直接交换 | 默认 `HashEmbeddingEncoder` 可离线生成向量；启动 Docker TEI 后可使用 `BAAI/bge-small-zh-v1.5` 真实 embedding。向量写成 `EmbeddingState`，由 Retriever 和 MemoryStore 用于语义检索。 |
+| 共享记忆存储、检索和复用 | `MemoryUnit` 包含 `memory_id`、`source_agent`、`created_at`、`task_topic`、`summary`、`tags`、`state_refs`、`embedding_ref`、`reuse_count` 等元数据；支持关键词、标签、语义相似度检索。 |
+| 至少 2 组关联连续任务 | 已提供 `continuous_tasks`、`long_context_tasks`、`showcase_protocol_advantage` 三组 suite，覆盖标准连续任务、长上下文链式任务、warm memory reuse 与 cold baseline 对比。 |
+| 统计通信、状态、时延、记忆命中和性能提升 | Benchmark 输出 token、wire bytes、agent I/O bytes、state payload bytes、latency、memory hit rate、reuse count、quality preservation 等指标，并生成 CSV、JSONL、Markdown 报告和 HTML dashboard。 |
+| 系统架构完整 | 包含多 Agent runtime、协议解析与调度、状态交换、共享记忆、评测模块、CodeAct 沙箱、可选 Rust Core、Docker/openEuler 部署文档。 |
+
+核心结论：AgentMesh-Runtime 不是普通多 Agent 聊天应用，而是针对赛题提出的系统层原型。它用 Text Mode 作为传统自然语言协作基线，用 Protocol Mode 验证结构化协议、StateRef、embedding state 和共享记忆能否降低跨 Agent 重复上下文传递成本。
+
+| 评分项 | 对应证明 |
+| --- | --- |
+| 通信效率 25 分 | `Benchmark 成果` 中展示 token、wire bytes、agent I/O bytes 降低率；`Typed Envelope` 和 `StateRef` 章节解释低开销来源。 |
+| 状态传递创新 20 分 | `StateStore 和 StateRef`、`Embedding`、`Typed Envelope` 章节说明非文本状态生成、传递、接收和使用方式。 |
+| 记忆复用效果 20 分 | `共享记忆` 章节说明 MemoryUnit、关键词/标签/语义检索；`showcase_protocol_advantage` 验证 warm reuse 与 cold baseline。 |
+| 系统完整性 20 分 | `架构设计`、`CodeAct 和 Sandbox`、`Docker 和 openEuler`、`质量验证` 章节覆盖运行时、调度、沙箱、部署和测试。 |
+| 实验验证 15 分 | `Benchmark 成果`、`Benchmark 和报告` 章节列出复现实验命令、dashboard、CSV、JSONL、Markdown 报告产物。 |
+
+## Benchmark 成果
+
+当前 benchmark 产物位于 `runs/latest/benchmarks/`，离线展示页为 `runs/latest/benchmarks/benchmark_dashboard.html`。三组 suite 共覆盖 20 轮任务运行，其中 `continuous_tasks` 6 轮、`long_context_tasks` 5 轮、`showcase_protocol_advantage` 9 轮。
+
+| Benchmark suite | 任务轮数 | Token 节省率 | Wire bytes 降低率 | 公平 wire bytes 降低率 | Agent I/O bytes 降低率 | 记忆命中率 | 复用记忆数 | 质量保持率 | 端到端时延变化 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `continuous_tasks` | 6 | 40.10% | 71.73% | 90.74% | 40.06% | 100% | 5 | 100% | -4.84% |
+| `long_context_tasks` | 5 | 20.82% | 59.14% | 87.63% | 20.77% | 100% | 3 | 100% | -4.35% |
+| `showcase_protocol_advantage` | 9 | 30.85% | 65.66% | 91.00% | 30.82% | 100% | 8 | 100% | -24.16% |
+
+结果解读：
+
+- 通信效率：Protocol Mode 在三组任务中均减少 token 和 wire bytes；其中公平 wire bytes 降低率达到 87.63% 到 91.00%，说明结构化 envelope、状态引用和 payload 分离显著减少了跨 Agent 传输负担。
+- 状态传递：Protocol Mode 不把完整中间结果塞回下一轮自然语言上下文，而是传递 `state://...` 引用；benchmark 同时记录 `protocol_state_payload_bytes`、typed envelope 和 payload store 字节数。
+- 记忆复用：三组 benchmark 的 `memory_hit_rate` 均为 100%，`showcase_protocol_advantage` 专门设计 Phase A 知识构建、Phase B warm reuse、Phase C cold baseline，验证相似任务能命中并复用历史记忆。
+- 质量保持：三组 benchmark 的 `quality_preservation_rate` 均为 100%，说明当前离线确定性评估中 Protocol Mode 在降低通信开销的同时没有牺牲结果完整性。
+- 时延现状：当前 Python 原型端到端时延尚未下降，主要受 SQLite、Python 调度、终端渲染、embedding 和本地执行开销影响。赛题核心验证目标已经在通信开销和记忆复用上体现；后续可通过 Rust Core、共享内存、Socket transport、批量 embedding 和更少同步落盘继续优化时延。
+
+复现实验命令：
+
+```bash
+uv run agentmesh benchmark --suite standard --no-llm
+uv run agentmesh benchmark --suite long --no-llm
+uv run agentmesh benchmark --suite showcase --no-llm
+uv run agentmesh dashboard
+```
+
+主要实验产物：
+
+```text
+runs/latest/benchmarks/benchmark_dashboard.html
+runs/latest/benchmarks/continuous_tasks/benchmark_summary.csv
+runs/latest/benchmarks/continuous_tasks/benchmark_detail.jsonl
+runs/latest/benchmarks/continuous_tasks/experiment_report.md
+runs/latest/benchmarks/long_context_tasks/benchmark_summary.csv
+runs/latest/benchmarks/showcase_protocol_advantage/benchmark_summary.csv
+```
+
 ## 当前实现概览
 
 已经实现的主线能力：
