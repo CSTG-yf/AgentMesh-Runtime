@@ -48,7 +48,15 @@ docker compose run --rm agentmesh benchmark --suite standard --no-llm
 docker compose run --rm agentmesh dashboard
 ```
 
-需要接入真实模型时，编辑 `.env` 中的 `AGENTMESH_LLM_BASE_URL`、`AGENTMESH_LLM_API_KEY` 和 `AGENTMESH_LLM_MODEL`；需要离线可复现实验时，在 `compare` 或 `benchmark` 命令后加 `--no-llm`。
+重要：`.env` 会从 `.env.example` 生成，但不会包含任何真实 LLM 密钥。需要接入真实模型时，必须由部署者自行编辑 `.env` 并填写：
+
+```bash
+AGENTMESH_LLM_BASE_URL=https://api.example.com/v1
+AGENTMESH_LLM_API_KEY=sk-...
+AGENTMESH_LLM_MODEL=your-model
+```
+
+如果不填写 LLM 配置，离线可复现实验仍可运行；在 `compare` 或 `benchmark` 命令后加 `--no-llm` 即可。
 
 ## 面向赛题的直接回答
 
@@ -561,6 +569,65 @@ bash scripts/deploy_openeuler_docker.sh
 ```
 
 部署说明见 `docs/openeuler_deploy.md` 和 `docs/docker_deploy.md`。
+
+## 发行版一键部署
+
+项目提供 Linux 发行包模板，目标是生成一个可交给评审或普通 Linux 用户直接解压运行的压缩包：
+
+```bash
+bash scripts/release/build_release.sh
+```
+
+生成产物：
+
+```text
+dist/agentmesh-runtime-linux-x86_64.tar.gz
+```
+
+发行包使用方式：
+
+```bash
+tar -xzf agentmesh-runtime-linux-x86_64.tar.gz
+cd agentmesh-runtime-linux-x86_64
+./install.sh
+./start-shell.sh
+```
+
+`install.sh` 会完成以下动作：
+
+- 从 `.env.example` 创建 `.env`，并默认启用 Docker TEI embedding；
+- 执行 `uv sync --all-extras --frozen` 安装锁定依赖；
+- 执行 `docker compose -f docker-compose.embedding.yml up -d` 部署嵌入模型；
+- 初始化 `data/`、`runs/latest/`；
+- 运行 `uv run agentmesh --help` 做 smoke check。
+
+发行包不会内置 LLM 密钥。`install.sh` 只会生成 `.env` 模板；如果要使用真实模型，部署者需要在安装后手动编辑 `.env`：
+
+```bash
+AGENTMESH_LLM_BASE_URL=https://api.example.com/v1
+AGENTMESH_LLM_API_KEY=sk-...
+AGENTMESH_LLM_MODEL=your-model
+```
+
+不配置 LLM 时，使用 `--no-llm` 可以完成离线 benchmark 和复现实验。
+
+发行包内还包含：
+
+```text
+start-shell.sh      # 启动 TEI 服务并进入 agentmesh shell
+run-benchmark.sh    # 运行 standard/long/showcase 三组离线 benchmark 并生成 dashboard
+stop-services.sh    # 停止 Docker TEI 服务
+README_RELEASE.md   # 面向发行包使用者的说明
+benchmark-results/  # 如果当前工作区已有 benchmark 成果，打包时会一并复制
+```
+
+如果在 Windows 当前开发环境中打包，也可以运行：
+
+```powershell
+.\scripts\release\build_release.ps1
+```
+
+Linux/openEuler 交付建议优先使用 `build_release.sh`，这样压缩包中的 shell 脚本会保留可执行权限。
 
 ## 文件目录架构注释
 
